@@ -90,6 +90,7 @@ def get_rtc_installation_status():
         status_msg = 'Empty log from vcdbg'
     return status, status_msg 
 
+
 def get_rtc_dtoverlay_id():
     """ Read /boot/config.txt and return the RTC DT identifier """
     rtc_dt_id = None
@@ -104,6 +105,7 @@ def get_rtc_dtoverlay_id():
             rtc_dt_id = re_result[0]
     return rtc_dt_id
 
+@except_to_status
 def is_fake_hwclock_removed():
     # TODO: check that files are absent: /etc/cron.hourly/fake-hwclock,
     #                                    /etc/init.d/fake-hwclock
@@ -134,6 +136,7 @@ def is_fake_hwclock_removed():
             
     return status, status_msg
 
+@except_to_status
 def is_systemd_ntp_disabled():
     tdc_output = subprocess.run('timedatectl', stderr=subprocess.PIPE,
                                 stdout=subprocess.PIPE)
@@ -187,7 +190,8 @@ def is_ntp_running():
                     status = STATUS_WARNING
                     status_msg = 'Using %s, but it is not connected' % hostname
     return status, status_msg    
-    
+
+@except_to_status
 def is_ntp_synced():
     ntpst_output = subprocess.run('ntpstat', stderr=subprocess.PIPE,
                                   stdout=subprocess.PIPE)
@@ -195,7 +199,7 @@ def is_ntp_synced():
     if output[0].startswith('unsynchronised'):
         status = STATUS_WARNING
         status_msg = 'system time not synchronised (yet?)' 
-    elif output[0].startswith('synchronized to local net'):
+    elif output[0].startswith('synchronised to local net'):
         status = STATUS_OK
         status_msg = 'Connected to %s' % hostname
     elif output[0].startswith('synchronised'):
@@ -208,7 +212,7 @@ def is_ntp_synced():
                      output[0]
     return status, status_msg    
 
-
+@except_to_status
 def is_ntp_queryable():
     ip_status, ip = get_local_ip()
     if ip_status == STATUS_ERROR or ip_status == STATUS_WARNING:
@@ -216,33 +220,14 @@ def is_ntp_queryable():
     else:
         ntp_client = ntplib.NTPClient()
         try: 
-            response = ntp_client.request(ip, version=4)
-    
-            # originate_date = datetime.datetime.fromtimestamp(response.orig_time)
-            # receive_date = datetime.datetime.fromtimestamp(response.recv_time)
-            # transmit_date = datetime.datetime.fromtimestamp(response.tx_time)
-            # destination_date = datetime.datetime.fromtimestamp(response.dest_time)
-        
-            # print('Originate   : ', originate_date.isoformat())
-            # delta1 = receive_date - originate_date
-            # print('Receive     : ', receive_date.isoformat(),
-            #       '(diff=%f s)' % delta1.total_seconds())
-            # delta2 = transmit_date - receive_date
-            # print('Transmit    : ', transmit_date.isoformat(),
-            #       '(diff=%f s)' % delta2.total_seconds())
-            # delta3 = destination_date - transmit_date
-            # print('Destination : ', destination_date.isoformat(),
-            #       '(diff=%f s)' % delta3.total_seconds())
-            
-            # print('Delay  : ', response.delay)
-            # print('Offset : ', response.offset)
+            response = ntp_client.request(ip, version=4)    
             if response.offset < 0.001:
                 return (STATUS_OK,
-                        'Queried NTP at %s - offset=%1.6f, delay=%1.6f s' % \
+                        'Queried NTP at %s - offset=%1.6f s, delay=%1.6f s' % \
                         (ip, response.offset, response.delay))
             else:
                 return (STATUS_WARNING,
-                        'Queried NTP at %s - LARGE offset=%1.6f, delay=%1.6f s'%\
+                        'Queried NTP at %s - LARGE offset=%1.6f s, delay=%1.6f s'%\
                         (ip, response.offset, response.delay))
         except Exception as e:
             return STATUS_ERROR, str(e) 
@@ -270,4 +255,3 @@ if __name__=='__main__':
     print_status('NTP running', is_ntp_running())
     print_status('NTP sync', is_ntp_synced())
     print_status('NTP query', is_ntp_queryable())
-    # check that ntp is reachable from LAN 
