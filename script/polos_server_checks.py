@@ -7,6 +7,7 @@ import os
 import subprocess
 import re
 import socket
+import ntplib
 
 DT_OVERLAY_RTC_RE = re.compile('^dtoverlay=(.*-rtc).*$', flags=re.MULTILINE)
 DATE_ISO_FORMAT_RE = re.compile('\d{4}-[01]\d-[0-3]\d [0-2]\d:[0-5]\d:[0-5]\d\.\d+([+-][0-2]\d:[0-5]\d|Z?)')
@@ -29,7 +30,7 @@ def get_local_ip():
     try:
         local_ip = [l for l in ([ip for ip in socket.gethostbyname_ex(socket.gethostname())[2] if not ip.startswith("127.")][:1], [[(s.connect(('8.8.8.8', 53)), s.getsockname()[0], s.close()) for s in [socket.socket(socket.AF_INET, socket.SOCK_DGRAM)]][0][1]]) if l][0][0]
     except Exception as e:
-        return (STATUS_ERROR, e.msg) 
+        return (STATUS_ERROR, str(e)) 
     else:
         return (STATUS_OK, local_ip)
     
@@ -103,11 +104,155 @@ def get_rtc_dtoverlay_id():
             rtc_dt_id = re_result[0]
     return rtc_dt_id
 
+def is_fake_hwclock_removed():
+    # TODO: check that files are absent: /etc/cron.hourly/fake-hwclock,
+    #                                    /etc/init.d/fake-hwclock
+    
+    cmd = ['systemctl', 'is-enabled', 'fake-hwclock']
+    sys_output = subprocess.run(cmd, stderr=subprocess.PIPE,
+                                stdout=subprocess.PIPE)
+    if sys_output.returncode:
+        err_msg = sys_output.stderr.decode('utf-8')
+        if err_msg.startswith('Failed to get unit'):
+            status = STATUS_OK
+            status_msg = 'fake-hwclock service not present'
+        else:
+            status = STATUS_ERROR
+            status_msg = 'Cannot check service fake-hwclock. Error: ' + \
+                         err_msg
+    else:
+        output = sys_output.stdout.decode('utf-8')
+        if 'disabled' in output:
+            status = STATUS_WARNING
+            status_msg = 'fake-hwclock disabled but present. Should be removed.'
+        elif 'enabled' in output or 'running' in output:
+            status = STATUS_ERROR
+            status_msg = 'fake-hwclock enabled or running. Should be removed.'
+        else:
+            status = STATUS_ERROR
+            status_msg = 'Cannot check service fake-hwclock'
+            
+    return status, status_msg
+
+def is_systemd_ntp_disabled():
+    tdc_output = subprocess.run('timedatectl', stderr=subprocess.PIPE,
+                                stdout=subprocess.PIPE)
+    
+    if tdc_output.returncode:
+        status = STATUS_ERROR
+        status_msg = 'Failed to query timedatectl. Error: ' + \
+                     tdc_output.stderr.decode('utf-8')
+    else:
+        output = tdc_output.stdout.decode('utf-8')
+        if 'systemd-timesyncd.service active: no' in output or \
+           'NTP service: inactive' in output:
+            status = STATUS_OK
+            status_msg = 'NTP from systemd service inactive'
+        else:
+            status = STATUS_ERROR
+            status_msg = 'NTP service from systemd should be disabled'
+    return status, status_msg    
+
+def is_ntp_running():
+    cmd = ['ntpq', '-p']
+    ntpq_output = subprocess.run(cmd, stderr=subprocess.PIPE,
+                                 stdout=subprocess.PIPE)
+    if ntpq_output.returncode:
+        status = STATUS_ERROR
+        status_msg = 'Failed to query NTP. Error: ' + \
+                     ntpq_output.stderr.decode('utf-8')
+    else:
+        output = ntpq_output.stdout.decode('utf-8').split('\n')
+        if len(output) > 3:
+            status = STATUS_WARNING
+            status_msg = 'There should only one time source (found %d)' % \
+                         len(output)
+        source_re = '^(?P<selected>\s|[*])(?P<hostname>.+?)\s+.*$'
+        source_match = re.search(source_re, output[2])
+        if source_match is None:
+            status = STATUS_ERROR
+            status_msg = 'Cannot parse source line "%s"' % output[2]
+        else:
+            selected = source_match.group('selected') == '*'
+            hostname = source_match.group('hostname')
+            if 'LOCAL' not in hostname:
+                status = STATUS_WARNING
+                status_msg = 'Using %s, may not be RTC (should be "LOCAL")' % \
+                             hostname
+            else:
+                if selected:
+                    status = STATUS_OK
+                    status_msg = 'Connected to %s' % hostname
+                else:
+                    status = STATUS_WARNING
+                    status_msg = 'Using %s, but it is not connected' % hostname
+    return status, status_msg    
+    
+def is_ntp_synced():
+    ntpst_output = subprocess.run('ntpstat', stderr=subprocess.PIPE,
+                                  stdout=subprocess.PIPE)
+    output = ntpst_output.stdout.decode('utf-8').split('\n')
+    if output[0].startswith('unsynchronised'):
+        status = STATUS_WARNING
+        status_msg = 'system time not synchronised (yet?)' 
+    elif output[0].startswith('synchronized to local net'):
+        status = STATUS_OK
+        status_msg = 'Connected to %s' % hostname
+    elif output[0].startswith('synchronised'):
+        status = STATUS_WARNING
+        status_msg = 'Synchronised but maybe not to local source: %s' % \
+                     output[0]
+    else:
+        status = STATUS_ERROR
+        status_msg = 'Cannot parse output of ntpstat: %s' % \
+                     output[0]
+    return status, status_msg    
+
+
+def is_ntp_queryable():
+    ip_status, ip = get_local_ip()
+    if ip_status == STATUS_ERROR or ip_status == STATUS_WARNING:
+        return STATUS_ERROR, 'Cannot get local IP to query NTP'
+    else:
+        ntp_client = ntplib.NTPClient()
+        try: 
+            response = ntp_client.request(ip, version=4)
+    
+            # originate_date = datetime.datetime.fromtimestamp(response.orig_time)
+            # receive_date = datetime.datetime.fromtimestamp(response.recv_time)
+            # transmit_date = datetime.datetime.fromtimestamp(response.tx_time)
+            # destination_date = datetime.datetime.fromtimestamp(response.dest_time)
+        
+            # print('Originate   : ', originate_date.isoformat())
+            # delta1 = receive_date - originate_date
+            # print('Receive     : ', receive_date.isoformat(),
+            #       '(diff=%f s)' % delta1.total_seconds())
+            # delta2 = transmit_date - receive_date
+            # print('Transmit    : ', transmit_date.isoformat(),
+            #       '(diff=%f s)' % delta2.total_seconds())
+            # delta3 = destination_date - transmit_date
+            # print('Destination : ', destination_date.isoformat(),
+            #       '(diff=%f s)' % delta3.total_seconds())
+            
+            # print('Delay  : ', response.delay)
+            # print('Offset : ', response.offset)
+            if response.offset < 0.001:
+                return (STATUS_OK,
+                        'Queried NTP at %s - offset=%1.6f, delay=%1.6f s' % \
+                        (ip, response.offset, response.delay))
+            else:
+                return (STATUS_WARNING,
+                        'Queried NTP at %s - LARGE offset=%1.6f, delay=%1.6f s'%\
+                        (ip, response.offset, response.delay))
+        except Exception as e:
+            return STATUS_ERROR, str(e) 
+            
+
 def run_as_root():
     return os.getuid() == 0
 
 def print_status(intro, status):
-    PADDING_INTRO = 20
+    PADDING_INTRO = 22
     PADDING_ST = 7
     print('%s %s -- %s' %((intro+'...').ljust(PADDING_INTRO), 
                           STATUS_LABELS[status[0]].rjust(PADDING_ST), 
@@ -120,9 +265,9 @@ if __name__=='__main__':
     print_status('RTC running', get_rtc_run_status())
     print_status('RTC battery', get_rtc_battery_status())
     print_status('Local IP', get_local_ip())
-    # check fake-hwclock.service not present
-    # check sudo timedatectl set-ntp false
-    # check ntp running
-    # check ntp is polling RTC (ntpq -p) 
-    # check ntp is synchronized ntpstat
+    print_status('fake-hwclock absent', is_fake_hwclock_removed())
+    print_status('Systemd-NTP off', is_systemd_ntp_disabled())
+    print_status('NTP running', is_ntp_running())
+    print_status('NTP sync', is_ntp_synced())
+    print_status('NTP query', is_ntp_queryable())
     # check that ntp is reachable from LAN 
