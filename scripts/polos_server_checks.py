@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 See documentation on how to assemble hardware and setup the reference time server.
 This script will run several checks to ensure that the server is functional.
@@ -14,7 +15,7 @@ if 'SUDO_USER' in os.environ and \
                   '========================================================\n')
 
 import polos
-
+from polos import print_status
 from sys import platform
 if sys.platform != "linux" and platform != "linux2":
     print('This script is only compatible with linux')
@@ -30,13 +31,6 @@ if not run_as_root():
     print('This script must be run as root')
     sys.exit(1)
             
-def print_status(intro, status):
-    PADDING_INTRO = 22
-    PADDING_ST = 7
-    print('%s %s -- %s' %((intro+'...').ljust(PADDING_INTRO), 
-                          polos.STATUS_LABELS[status[0]].rjust(PADDING_ST), 
-                          status[1]))
-
 if __name__=='__main__':
     print_status('RTC installation', polos.get_rtc_installation_status())
     print_status('RTC running', polos.get_rtc_run_status())
@@ -44,6 +38,6 @@ if __name__=='__main__':
     print_status('Local IP', polos.get_local_ip())
     print_status('fake-hwclock absent', polos.is_fake_hwclock_removed())
     print_status('Systemd-NTP off', polos.is_systemd_ntp_disabled())
-    print_status('NTP running', polos.is_ntp_running())
-    print_status('NTP sync', polos.is_ntp_synced())
-    print_status('NTP query', polos.is_ntp_queryable())
+    print_status('NTP running', polos.ref_time_server_is_ntp_running())
+    print_status('NTP sync', polos.ref_time_server_is_ntp_synced())
+    print_status('NTP query', polos.ref_time_server_is_ntp_queryable())

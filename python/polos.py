@@ -10,20 +10,6 @@ import warnings
 import ntplib
 
 
-
-
-
-
-
-def except_to_status(func):
-    def _func(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            return STATUS_ERROR, str(e)
-    return _func
-
-
 DT_OVERLAY_RTC_RE = re.compile('^dtoverlay=(.*-rtc).*$', flags=re.MULTILINE)
 DATE_ISO_FORMAT_RE = re.compile('\d{4}-[01]\d-[0-3]\d [0-2]\d:[0-5]\d:[0-5]\d\.\d+([+-][0-2]\d:[0-5]\d|Z?)')
 DMESG_LOW_BAT_ENTRY_RE = re.compile('^[\][ 0-9]+[.][0-9]+[]].*: (.*low voltage.*RTC.*|.*RTC.*low voltage.*)$', flags=re.MULTILINE)
@@ -159,7 +145,7 @@ def is_systemd_ntp_disabled():
             status_msg = 'NTP service from systemd should be disabled'
     return status, status_msg    
 
-def is_ntp_running():
+def ref_time_server_is_ntp_running():
     cmd = ['ntpq', '-p']
     ntpq_output = subprocess.run(cmd, stderr=subprocess.PIPE,
                                  stdout=subprocess.PIPE)
@@ -194,9 +180,13 @@ def is_ntp_running():
                     status_msg = 'Using %s, but it is not connected' % hostname
     return status, status_msg    
 
-def is_ntp_synced():
-    ntpst_output = subprocess.run('ntpstat', stderr=subprocess.PIPE,
-                                  stdout=subprocess.PIPE)
+def ref_time_server_is_ntp_synced():
+    try:
+        ntpst_output = subprocess.run('ntpstat', stderr=subprocess.PIPE,
+                                      stdout=subprocess.PIPE)
+    except FileNotFoundError:
+        return STATUS_ERROR, 'ntpstat command not found'
+    
     output = ntpst_output.stdout.decode('utf-8').split('\n')
     if output[0].startswith('unsynchronised'):
         status = STATUS_WARNING
@@ -214,21 +204,91 @@ def is_ntp_synced():
                      output[0]
     return status, status_msg    
 
-def is_ntp_queryable():
-    ip_status, ip = get_local_ip()
-    if ip_status == STATUS_ERROR or ip_status == STATUS_WARNING:
-        return STATUS_ERROR, 'Cannot get local IP to query NTP'
+def ref_time_server_is_ntp_queryable(ip=None):
+    if ip is None:
+        ip_status, ip = get_local_ip()
+        if ip_status == STATUS_ERROR or ip_status == STATUS_WARNING:
+            return STATUS_ERROR, 'Cannot get local IP to query NTP'
+        
+    ntp_client = ntplib.NTPClient()
+    try: 
+        response = ntp_client.request(ip, version=4)    
+        if response.offset < 0.001:
+            return (STATUS_OK,
+                    'Queried NTP at %s - offset=%1.6f s, delay=%1.6f s' % \
+                    (ip, response.offset, response.delay))
+        else:
+            return (STATUS_WARNING,
+                    'Queried NTP at %s - LARGE offset=%1.6f s, delay=%1.6f s'%\
+                    (ip, response.offset, response.delay))
+    except Exception as e:
+        return STATUS_ERROR, str(e) 
+
+    
+#HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpServer
+# -> value set as 1 if NTP is enabled
+
+# from winreg import OpenKey
+# try:
+#     reg_entry = r'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\DateTime\Servers'
+#     kservers = OpenKey(HKEY_CURRENT_USER, reg_entry)
+#     t = (EnumValue(n,0))    
+# except WindowsError:
+#     status_msg = 'Failed to read reg entry %s' reg_entry
+
+# https://docs.microsoft.com/en-us/windows-server/networking/windows-time-service/windows-time-service-tools-and-settings
+
+def client_get_ntp_source_ip():
+    if sys.platform.startswith('linux'):
+        raise NotImplementedError('Getting NTP source for linux system.')
+    elif sys.platform == 'win32':
+        w32tm_out = subprocess.run(['w32tm', '/query', '/source'],
+                                   stderr=subprocess.PIPE,
+                                   stdout=subprocess.PIPE)
+        # TODO: Handle when NTP is not running / no source 
+        return w32tm_out.stdout.decode('utf-8').strip()
     else:
-        ntp_client = ntplib.NTPClient()
-        try: 
-            response = ntp_client.request(ip, version=4)    
-            if response.offset < 0.001:
-                return (STATUS_OK,
-                        'Queried NTP at %s - offset=%1.6f s, delay=%1.6f s' % \
-                        (ip, response.offset, response.delay))
+        raise Exception('Unsupported platform: %s', sys.platform)
+
+def client_is_ntp_running():
+    if sys.platform.startswith('linux'):
+        raise NotImplementedError('Check NTP running for linux system.')
+    elif sys.platform == 'win32':
+        w32tm_out = subprocess.run(['w32tm', '/query', '/configuration'],
+                                   stderr=subprocess.PIPE,
+                                   stdout=subprocess.PIPE)
+        config_re = 'NtpClient (Local)\n.*?\nEnabled: *(?P:<enabled>0|1)' /
+                    '.*?Type: *(?P<type>.*?\n'
+        cfg_match = re.search(config_re, w32tm_out.stdout.decode('utf-8'))
+        enabled = cfg_match.groups('enabled')=='1'
+        ntp_type_is_NTP = cfg_match.groups('type')=='NTP'
+        if enabled:
+            if ntp_type_is_NTP:
+                status = STATUS_WARNING
+                status_msg = 'NTP client enabled but type is not NTP: %s' % \
+                             cfg_match.groups('type')
             else:
-                return (STATUS_WARNING,
-                        'Queried NTP at %s - LARGE offset=%1.6f s, delay=%1.6f s'%\
-                        (ip, response.offset, response.delay))
+                status = STATUS_OK
+                status_msg = 'NTP client enabled and type is NTP.'
+        else:
+            status = STATUS_ERROR
+            status_msg = 'NTP client not enabled.'
+            
+        return status, status_msg    
+    else:
+        raise Exception('Unsupported platform: %s', sys.platform)    
+    
+def print_status(intro, status):
+    PADDING_INTRO = 22
+    PADDING_ST = 7
+    print('%s %s -- %s' %((intro+'...').ljust(PADDING_INTRO), 
+                          polos.STATUS_LABELS[status[0]].rjust(PADDING_ST), 
+                          status[1]))
+
+def except_to_status(func):
+    def _func(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
         except Exception as e:
-            return STATUS_ERROR, str(e) 
+            return STATUS_ERROR, str(e)
+    return _func
