@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-from distutils.core import setup
+from setuptools import setup
 
 setup(name='polos',
       version='0.1',
@@ -8,9 +8,9 @@ setup(name='polos',
       author='Thomas Vincent',
       author_email='thomas.tv.vincent@gmail.com',
       url='https://github.com/thomas-vincent/polos',
+      packages=['polos'],      
       package_dir={'': 'python'},
-      packages=find_packages('python'),
-      licence='GPL3',
+      license='GPL3',
       scripts=['scripts/polos_client_checks', 'scripts/polos_server_checks'],
       classifiers=[
           "Development Status :: 3 - Alpha",
@@ -26,4 +26,5 @@ setup(name='polos',
           "Topic :: System :: Monitoring",
           "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
           "Natural Language :: English"],
+      python_requires = '>= 3.6',
 )

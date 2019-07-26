@@ -8,7 +8,7 @@ import re
 import socket
 import warnings
 import ntplib
-
+import sys
 
 DT_OVERLAY_RTC_RE = re.compile('^dtoverlay=(.*-rtc).*$', flags=re.MULTILINE)
 DATE_ISO_FORMAT_RE = re.compile('\d{4}-[01]\d-[0-3]\d [0-2]\d:[0-5]\d:[0-5]\d\.\d+([+-][0-2]\d:[0-5]\d|Z?)')
@@ -257,7 +257,7 @@ def client_is_ntp_running():
         w32tm_out = subprocess.run(['w32tm', '/query', '/configuration'],
                                    stderr=subprocess.PIPE,
                                    stdout=subprocess.PIPE)
-        config_re = 'NtpClient (Local)\n.*?\nEnabled: *(?P:<enabled>0|1)' /
+        config_re = 'NtpClient (Local)\n.*?\nEnabled: *(?P:<enabled>0|1)' \
                     '.*?Type: *(?P<type>.*?\n'
         cfg_match = re.search(config_re, w32tm_out.stdout.decode('utf-8'))
         enabled = cfg_match.groups('enabled')=='1'
