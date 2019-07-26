@@ -11,6 +11,7 @@ setup(name='polos',
       package_dir={'': 'python'},
       packages=find_packages('python'),
       licence='GPL3',
+      scripts=['scripts/polos_client_checks', 'scripts/polos_server_checks'],
       classifiers=[
           "Development Status :: 3 - Alpha",
           "Environment :: Console",
