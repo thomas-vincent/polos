@@ -215,11 +215,11 @@ def ref_time_server_is_ntp_queryable(ip=None):
         response = ntp_client.request(ip, version=4)    
         if response.offset < 0.001:
             return (STATUS_OK,
-                    'Queried NTP at %s - offset=%1.6f s, delay=%1.6f s' % \
+                    'Queried NTP at %s\nTime offset=%1.6f s\nNetwork delay=%1.6f s' % \
                     (ip, response.offset, response.delay))
         else:
             return (STATUS_WARNING,
-                    'Queried NTP at %s - LARGE offset=%1.6f s, delay=%1.6f s'%\
+                    'Queried NTP at %s\nLARGE time offset=%1.6f s\nNetwork delay=%1.6f s'%\
                     (ip, response.offset, response.delay))
     except Exception as e:
         return STATUS_ERROR, str(e) 
@@ -281,9 +281,14 @@ def client_is_ntp_running():
 def print_status(intro, status):
     PADDING_INTRO = 22
     PADDING_ST = 7
-    print('%s %s -- %s' %((intro+'...').ljust(PADDING_INTRO), 
-                          polos.STATUS_LABELS[status[0]].rjust(PADDING_ST), 
-                          status[1]))
+    SEP = ' -- '
+    status_msg_lines = pad_lines(status[1], PADDING_INTRO+len(SEP)+PADDING_ST+1)
+    print('%s %s%s%s' %((intro+'...').ljust(PADDING_INTRO), 
+                          STATUS_LABELS[status[0]].rjust(PADDING_ST),
+                          SEP, status_msg_lines))
+
+def pad_lines(s, padding):
+    return s.replace('\n', '\n' + ' ' * padding)
 
 def except_to_status(func):
     def _func(*args, **kwargs):
