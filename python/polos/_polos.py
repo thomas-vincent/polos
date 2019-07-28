@@ -145,39 +145,67 @@ def is_systemd_ntp_disabled():
             status_msg = 'NTP service from systemd should be disabled'
     return status, status_msg    
 
-def ref_time_server_is_ntp_running():
+def linux_get_ntp_sources():
     cmd = ['ntpq', '-p']
     ntpq_output = subprocess.run(cmd, stderr=subprocess.PIPE,
                                  stdout=subprocess.PIPE)
+
+    i_selected_source = None
+    sources = []
+    
     if ntpq_output.returncode:
-        status = STATUS_ERROR
-        status_msg = 'Failed to query NTP. Error: ' + \
-                     ntpq_output.stderr.decode('utf-8')
+        raise Exception('Failed to query NTP. Error: ' + \
+                        ntpq_output.stderr.decode('utf-8'))
     else:
         output = ntpq_output.stdout.decode('utf-8').split('\n')
-        if len(output) > 3:
-            status = STATUS_WARNING
-            status_msg = 'There should only one time source (found %d)' % \
-                         len(output)
         source_re = '^(?P<selected>\s|[*])(?P<hostname>.+?)\s+.*$'
-        source_match = re.search(source_re, output[2])
-        if source_match is None:
-            status = STATUS_ERROR
-            status_msg = 'Cannot parse source line "%s"' % output[2]
-        else:
-            selected = source_match.group('selected') == '*'
-            hostname = source_match.group('hostname')
-            if 'LOCAL' not in hostname:
-                status = STATUS_WARNING
-                status_msg = 'Using %s, may not be RTC (should be "LOCAL")' % \
-                             hostname
+        for iline, line in enumerate([l for l in output[2:] if len(l)>0]):
+            source_match = re.search(source_re, line)
+            if source_match is None:
+                warnings.warn('Cannot parse ntpq report line: %s' % line)
             else:
-                if selected:
-                    status = STATUS_OK
-                    status_msg = 'Connected to %s' % hostname
-                else:
-                    status = STATUS_WARNING
-                    status_msg = 'Using %s, but it is not connected' % hostname
+                sources.append(source_match.group('hostname'))
+                if source_match.group('selected') == '*':
+                    i_selected_source = iline
+                    
+    return sources, i_selected_source
+
+def ref_time_server_is_ntp_running():
+    try:
+        sources, i_selected = linux_get_ntp_sources()
+    except Exception as e:
+        status = STATUS_ERROR
+        status_msg = e.message
+    
+    src_local = [(isrc, src) for (isrc, src) in enumerate(sources) \
+                 if 'LOCAL' in src]
+    if len(src_local) == 1:
+        if src_local[0][0]==i_selected:
+            status = STATUS_OK
+            status_msg = 'Connected to %s' % src_local[0][1]
+        else:
+            status = STATUS_ERROR
+            status_msg = '%s is listed but not connected' % src_local[0][1]
+    elif len(src_local) == 0:
+            status = STATUS_ERROR
+            status_msg = 'RTC (LOCAL) source not found'
+            if len(sources) > 1:
+                status_msg += ' but multiple non-RTC sources listed: %s' \
+                              ', '.join(sources) + \
+                              '. There should be only one LOCAL source listed.'
+            else:
+                status_msg += '.'
+    else: # more than one LOCAL source
+        isrc_local_sel = [isrc for src, isrc in src_local if isrc==i_selected]
+        if len(isrc_local_sel)==1:
+            status = STATUS_WARNING
+            status_msg = 'Connected to %s, but other LOCAL sources found. ' \
+                         'There should be only one LOCAL source.' % \
+                         src_local[isrc_local_sel][0]
+        else:
+            status = STATUS_ERROR
+            status_msg = 'Multiple LOCAL sources listed but connected ' \
+                         'to none: %s' ', '.join([s for s,i in src_local])
     return status, status_msg    
 
 def ref_time_server_is_ntp_synced():
@@ -204,12 +232,15 @@ def ref_time_server_is_ntp_synced():
                      output[0]
     return status, status_msg    
 
-def ref_time_server_is_ntp_queryable(ip=None):
+def is_ntp_queryable(ip=None):
     if ip is None:
         ip_status, ip = get_local_ip()
         if ip_status == STATUS_ERROR or ip_status == STATUS_WARNING:
             return STATUS_ERROR, 'Cannot get local IP to query NTP'
         
+    if ip == '':
+        return STATUS_ERROR, 'No NTP source found'
+    
     ntp_client = ntplib.NTPClient()
     try: 
         response = ntp_client.request(ip, version=4)    
@@ -240,7 +271,13 @@ def ref_time_server_is_ntp_queryable(ip=None):
 
 def client_get_ntp_source_ip():
     if sys.platform.startswith('linux'):
-        raise NotImplementedError('Getting NTP source for linux system.')
+        
+        sources, i_selected = linux_get_ntp_sources()        
+        if i_selected is None:
+            return ''
+        else:
+            return sources[i_selected]
+        
     elif sys.platform == 'win32':
         w32tm_out = subprocess.run(['w32tm', '/query', '/source'],
                                    stderr=subprocess.PIPE,
@@ -251,8 +288,22 @@ def client_get_ntp_source_ip():
         raise Exception('Unsupported platform: %s', sys.platform)
 
 def client_is_ntp_running():
+
+    status = STATUS_ERROR
+    status_msg = 'Cannot check if NTP is running.'
+    
     if sys.platform.startswith('linux'):
-        raise NotImplementedError('Check NTP running for linux system.')
+        sources, i_selected = linux_get_ntp_sources()
+        if len(sources) == 1 and i_selected is not None:
+            status = STATUS_OK
+            status_msg = 'NTP client connected to %s.' % (sources[i_selected])
+        elif len(sources) > 1 and i_selected is not None:
+            status = STATUS_WARNING
+            status_msg = 'NTP client connected to %s but other sources ' \
+                         'listed (%s). There should be only one.' % \
+                         (sources[i_selected],
+                          ', '.join([s for s in sources \
+                                     if s!=sources[i_selected]]))
     elif sys.platform == 'win32':
         w32tm_out = subprocess.run(['w32tm', '/query', '/configuration'],
                                    stderr=subprocess.PIPE,
@@ -273,11 +324,11 @@ def client_is_ntp_running():
         else:
             status = STATUS_ERROR
             status_msg = 'NTP client not enabled.'
-            
-        return status, status_msg    
     else:
         raise Exception('Unsupported platform: %s', sys.platform)    
-    
+
+    return status, status_msg
+
 def print_status(intro, status):
     PADDING_INTRO = 22
     PADDING_ST = 7

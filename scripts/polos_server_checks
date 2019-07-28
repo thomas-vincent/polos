@@ -40,4 +40,4 @@ if __name__=='__main__':
     print_status('Systemd-NTP off', polos.is_systemd_ntp_disabled())
     print_status('NTP running', polos.ref_time_server_is_ntp_running())
     print_status('NTP sync', polos.ref_time_server_is_ntp_synced())
-    print_status('NTP self query', polos.ref_time_server_is_ntp_queryable())
+    print_status('NTP self query', polos.is_ntp_queryable())
