@@ -1,4 +1,6 @@
 import time
 
+t0 = time.time()
+pc0 = time.perf_counter()
 while True:
-    print(time.time())
+    print(time.perf_counter() - pc0 + t0)
