@@ -1,6 +1,5 @@
 """ 
-Draft vesion of the core module. Should be moved to proper module 
-folder, outside of script
+Core module.
 """ 
 import os.path as op
 import subprocess
