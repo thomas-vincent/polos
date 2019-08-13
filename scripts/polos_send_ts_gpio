@@ -1,0 +1,56 @@
+
+"""
+'It aims at being accurate but ' \
+'is quite slow. The transmission is often limited by the ' \
+'receiver sampling rate anyway.'
+"""
+
+import logging
+from optparse import OptionParser
+
+from polos.protocol import DiscretePwmProtocol
+
+logger = logging.getLogger('polos')
+
+def main():
+    usage = 'usage: %prog [options] GPIO_NUMBERING GPIO_ID RECEVIER_FREQ'
+    description = 'Send the current time stamp (system time) through GPIO ' \
+                  'on a raspeberry pi using a software discrete pulse width '\
+                  'modulation (PWM) protocol.'
+
+    min_args = 3
+    max_args = 3
+
+    parser = OptionParser(usage=usage, description=description)
+
+    parser.add_option('-v', '--verbose', dest='verbose', metavar='VERBOSELEVEL',
+                      type='int', default=0,
+                      help='Amount of verbosity: '\
+                           '0 (NOTSET: quiet, default), '\
+                           '50 (CRITICAL), ' \
+                           '40 (ERROR), ' \
+                           '30 (WARNING), '\
+                           '20 (INFO), '\
+                           '10 (DEBUG)')
+    
+    (options, args) = parser.parse_args()
+    logger.setLevel(options.verbose)
+
+    nba = len(args)
+    if nba < min_args or (max_args >= 0 and nba > max_args):
+        parser.print_help()
+        return 1
+
+    gpio_mode, gpio_id, sampling_rate = args
+
+    #TODO: check args
+    
+    GPIO.setmode(gpio_mode)
+    GPIO.setup(gpio_id, GPIO.OUT, initial=GPIO.LOW)
+
+    sender = DiscretePwmProtocol()
+    sender.send_value(time.time, sampling_rate,
+                      lambda: GPIO.output(gpio_id, GPIO.HIGH),
+                      lambda: GPIO.output(gpio_id, GPIO.LOW))
+
+    GPIO.cleanup(gpio_id)
