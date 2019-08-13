@@ -9,6 +9,9 @@ import warnings
 import ntplib
 import sys
 
+import configparser
+from io import StringIO
+
 DT_OVERLAY_RTC_RE = re.compile('^dtoverlay=(.*-rtc).*$', flags=re.MULTILINE)
 DATE_ISO_FORMAT_RE = re.compile('\d{4}-[01]\d-[0-3]\d [0-2]\d:[0-5]\d:[0-5]\d\.\d+([+-][0-2]\d:[0-5]\d|Z?)')
 DMESG_LOW_BAT_ENTRY_RE = re.compile('^[\][ 0-9]+[.][0-9]+[]].*: (.*low voltage.*RTC.*|.*RTC.*low voltage.*)$', flags=re.MULTILINE)
@@ -307,16 +310,30 @@ def client_is_ntp_running():
         w32tm_out = subprocess.run(['w32tm', '/query', '/configuration'],
                                    stderr=subprocess.PIPE,
                                    stdout=subprocess.PIPE)
-        config_re = 'NtpClient (Local)\n.*?\nEnabled: *(?P:<enabled>0|1)' \
-                    '.*?Type: *(?P<type>.*?\n'
-        cfg_match = re.search(config_re, w32tm_out.stdout.decode('utf-8'))
-        enabled = cfg_match.groups('enabled')=='1'
-        ntp_type_is_NTP = cfg_match.groups('type')=='NTP'
+        # config_re = r'.*NtpClient (Local)\s+.*?\sEnabled:\s*(?P<enabled>0|1).*?Type:\s*(?P<type>.*?)(?:\n|\r).*'
+        # config_re = r'^.*Ntp.*$^Enabled:\s*(?P<enabled>0|1)\s*$.*'
+        w32tm_stdout = w32tm_out.stdout.decode('utf-8')
+        # print('w32tm_stdout: ', w32tm_stdout) 
+        # cfg_match = re.search(config_re, w32tm_stdout, flags=re.MULTILINE)
+        
+        w32tm_stdout = w32tm_stdout[:w32tm_stdout.index('NtpServer')].replace('NtpClient (Local)', '')
+        w32tm_cfg = configparser.ConfigParser()
+        w32tm_cfg.readfp(StringIO(w32tm_stdout))
+        
+        # print('w32tm_cfg: ', w32tm_cfg)
+        
+        if 0:
+            enabled = cfg_match.groups('enabled')=='1'
+            ntp_type_is_NTP = cfg_match.groups('type')=='NTP'
+        else:
+            enabled = w32tm_cfg.get('TimeProviders', 'Enabled').strip().startswith('1')
+            ntp_type_is_NTP = 'NTP' in w32tm_cfg.get('TimeProviders', 'Type')
+		        
         if enabled:
-            if ntp_type_is_NTP:
+            if not ntp_type_is_NTP:
                 status = STATUS_WARNING
                 status_msg = 'NTP client enabled but type is not NTP: %s' % \
-                             cfg_match.groups('type')
+                             w32tm_cfg.get('TimeProviders', 'Type')
             else:
                 status = STATUS_OK
                 status_msg = 'NTP client enabled and type is NTP.'
