@@ -244,8 +244,7 @@ class DiscretePwmProtocol:
     
         # Send a separator
         tic = time.perf_counter()
-        logger.debug('Sending value %f ...', value_tr)
-        
+        logger.debug('Sending value %f...', value_tr)
         off_func()
         time.sleep(dt * DiscretePwmProtocol.NB_SAMPLES_SEP - \
                    time.perf_counter() + tic)
@@ -282,7 +281,7 @@ class DiscretePwmProtocol:
                    time.perf_counter() + tic)
         
         send_duration = time.perf_counter() - t_start_send
-        logger.debug('Value %f sent in %1.3f s', value_tr, send_duration)
+        logger.info('Value %f sent in %1.3f s', value_tr, send_duration)
         return value_tr, delay, send_duration
     
     def send_timestamp_gpio(self, gpio_id, sampling_rate):
