@@ -277,6 +277,7 @@ class DiscretePwmProtocol:
     
         # Send a separator
         tic = time.perf_counter()
+        logger.debug('Sending value %f...', value_tr)
         off_func()
         time.sleep(dt * DiscretePwmProtocol.NB_SAMPLES_SEP - \
                    time.perf_counter() + tic)
@@ -312,9 +313,34 @@ class DiscretePwmProtocol:
         time.sleep(dt * DiscretePwmProtocol.NB_SAMPLES_SEP - \
                    time.perf_counter() + tic)
         
-        return value_tr, delay, time.perf_counter() - t_start_send
+        send_duration = time.perf_counter() - t_start_send
+        logger.info('Value %f sent in %1.3f s', value_tr, send_duration)
+        return value_tr, delay, send_duration
     
-#### Tests ####
+    def send_timestamp_gpio(self, gpio_id, sampling_rate):
+        """ 
+        Helper function to send a timestamp using GPIO on a 
+        raspberry pi.
+        """
+        from RPi import GPIO
+        try:
+            gpio_chan = GPIO.gpio_function(gpio_id)
+        except Exception:
+            raise Exception('Error in GPIO setup. Make sure to set ' \
+                            'GPIO numbering mode ' \
+                            'and setup GPIO channel %d before calling ' \
+                            'this function.')
+        if gpio_chan != GPIO.OUT:
+            raise Exception('Given GPIO channel %d must be setup ' \
+                            'to GPIO.OUT before calling this function.')
+        logger.info('Sending timestamp through GPIO %d at %1.2f Hz...',
+                    gpio_id, sampling_rate)
+        self.send_value(time.time, sampling_rate,
+                        lambda: GPIO.output(gpio_id, GPIO.HIGH),
+                        lambda: GPIO.output(gpio_id, GPIO.LOW))
+        
+        
+#### Some mock recording interfaces to emulate receivers ####
 
 class RecordTerminated(Exception): pass
     

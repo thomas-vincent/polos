@@ -1,15 +1,13 @@
-
-"""
-'It aims at being accurate but ' \
-'is quite slow. The transmission is often limited by the ' \
-'receiver sampling rate anyway.'
-"""
-
+#!/usr/bin/env python3
+import time
+import RPi.GPIO as GPIO
+import sys
 import logging
 from optparse import OptionParser
 
 from polos.protocol import DiscretePwmProtocol
 
+logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger('polos')
 
 def main():
@@ -43,14 +41,36 @@ def main():
 
     gpio_mode, gpio_id, sampling_rate = args
 
-    #TODO: check args
-    
+    try:
+        gpio_id = int(gpio_id)
+    except Exception:
+        print('Error with GPIO_ID. Must be an integer')
+        parser.print_help()
+        return 1
+
+    if not (gpio_mode == 'BCM' or gpio_mode == 'BOARD'):
+        print('Error with GPIO_MODE. Must either be BCM or BOARD.')
+        parser.print_help()
+        return 1
+    gpio_mode = {'BCM' : GPIO.BCM, 'BOARD' : GPIO.BOARD}[gpio_mode]
+        
+    try:
+        sampling_rate = float(sampling_rate)
+        assert(sampling_rate > 0)
+    except Exception:
+        print('Error with GPIO_ID. Must be stricly positive float number')
+        parser.print_help()
+        return 1
+
+    logger.info('Initialize GPIO...')
     GPIO.setmode(gpio_mode)
     GPIO.setup(gpio_id, GPIO.OUT, initial=GPIO.LOW)
 
-    sender = DiscretePwmProtocol()
-    sender.send_value(time.time, sampling_rate,
-                      lambda: GPIO.output(gpio_id, GPIO.HIGH),
-                      lambda: GPIO.output(gpio_id, GPIO.LOW))
+    sender = DiscretePwmProtocol(precision=6) #TODO: expose precision
+    sender.send_timestamp_gpio(gpio_id, sampling_rate)
 
+    logger.info('Cleanup GPIO...')
     GPIO.cleanup(gpio_id)
+
+if __name__=='__main__':
+    main()
