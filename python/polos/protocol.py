@@ -2,6 +2,7 @@ import time
 from threading import Thread
 import logging
 import numpy as np
+import re
 
 logger = logging.getLogger('polos')
 
@@ -119,6 +120,38 @@ class DiscretePwmProtocol:
                                                   drop_whitespace=False))])
         
         bin_sig = sig > (sig.max() * cls.SIG_THRESH_FACTOR)
+        # return self._decode_chunk_by_chunk(bin_sig)
+        return cls._decode_regexp(''.join([str(int(e)) for e in bin_sig]))
+
+    @classmethod
+    def _decode_regexp(cls, bin_seq_str):
+            values = []
+            re_seqs = '1{6,8}0{1,3}(?:(?:1{1,3}|1{4,6})0{1,3}){4,}1{6,8}'
+            seqs = re.findall(re_seqs, bin_seq_str)
+
+            def decode_val(code):
+                tmp = re.sub('1{1,2}0{1,3}','o',re.sub('1{4,6}0{1,3}','z',code))
+                bins = tmp.replace('0', '').replace('z', '0').replace('o', '1')
+                return int(bins, 2)
+
+            for seq_match in re.finditer(re_seqs, bin_seq_str):
+                re_segs = '1{6,8}0{1,3}' \
+                          '(?P<precision>(?:(?:1{1,3}|1{4,6})0{1,3}){4})' \
+                          '(?P<value>(?:(?:1{1,3}|1{4,6})0{1,3})+)'\
+                          '1{6,8}'
+                rr_segs = re.search(re_segs, seq_match.string)
+                if rr_segs is not None:
+                    segs_groups = rr_segs.groupdict()
+                    precision = decode_val(segs_groups['precision'])
+                    value = decode_val(segs_groups['value']) / 10**precision
+                else:
+                    warning('Could not decode sequence at pos %d: %s',
+                            seq_match.start(), seq_match.string)
+                    continue
+                values.append((seq_match.start(), value))
+            return values
+        
+    def _decode_chunk_by_chunk(self, bin_sig):
         interuptions = np.where(np.diff(bin_sig.astype(int))!=0)[0] + 1
         chunks = np.split(bin_sig, interuptions)
         bin_seq = []
