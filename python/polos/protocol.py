@@ -397,7 +397,7 @@ class Recorder(Thread):
         if not self.finished:
             # Do first step taking into account thread starting delay
             t0 = time.perf_counter()
-            self.record_start_ts = time.time()        
+            self.record_start_ts = time.time()
             try:
                 self.record()
             except RecordTerminated:

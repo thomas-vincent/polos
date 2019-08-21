@@ -12,7 +12,7 @@ setup(name='polos',
       package_dir={'': 'python'},
       license='GPL3',
       scripts=['scripts/polos_client_checks', 'scripts/polos_spam_time',
-               'scripts/polos_send_ts_gpio'],
+               'scripts/polos_send_ts_gpio', 'scripts/polos_server_ui'],
       classifiers=[
           "Development Status :: 3 - Alpha",
           "Environment :: Console",
