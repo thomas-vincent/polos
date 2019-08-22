@@ -1,0 +1,128 @@
+#! /usr/bin/env python3
+"""
+Synchronized Trigger Server
+
+Mainly for test purpose. 
+This server is normally managed by polos_server_ui.
+
+The trigger can be either:
+- a time stamp dumped in a temporary file
+- a GPIO output
+
+See usage
+"""
+from optparse import OptionParser
+import sys
+import logging
+import os.path as op
+import os
+import tempfile
+from polos.server import sync_trigger_server, STS_DEFAULT_PORT, TimestampSaver
+from polos.server import STS_DEFAULT_NAME
+from polos.server import server_trigger_fn_prefix as trigger_fn_prefix
+from polos.server import server_dummy_fn_prefix as dummy_fn_prefix
+
+logging.basicConfig(stream=sys.stdout)
+logger = logging.getLogger('polos')
+
+TRIGGER_MODES = ['TRIGGER_GPIO', 'TRIGGER_FILE', 'TRIGGER_PRINT']
+
+def main():
+    usage = 'usage: %prog [options] TRIGGER'
+    description = 'Serve a Synchronized Trigger Server.' \
+                  'TRIGGER: TRIGGER_GPIO using RPi GPIO output, '\
+                  'TRIGGER_FILE to dump a file containing the trigger ' \
+                  'timestamp, or TRIGGER_PRINT to print trigger timestamp '\
+                  'to stdout'
+
+    min_args = 1
+    max_args = 1
+
+    parser = OptionParser(usage=usage, description=description)
+        
+    parser.add_option('-v', '--verbose', dest='verbose', metavar='VERBOSELEVEL',
+                      type='int', default=0,
+                      help='Amount of verbosity: '\
+                           '0 (NOTSET: quiet, default), '\
+                           '50 (CRITICAL), ' \
+                           '40 (ERROR), ' \
+                           '30 (WARNING), '\
+                           '20 (INFO), '\
+                           '10 (DEBUG)')
+
+    # TODO: use config file for these:
+    gpio_trig_default = 23 # BCM
+    gpio_alt_default = 6 # BCM
+    default_dump_dir = op.join(tempfile.gettempdir(), 'polos')
+    if not op.exists(default_dump_dir):
+        os.makedirs(default_dump_dir)
+        
+    parser.add_option('-g', '--trigger-gpio-id', dest='trigger_gpio_id',
+                      metavar='GPIO_ID', type='int', default=gpio_trig_default,
+                      help='GPIO id for the main trigger. GPIO numbering mode '\
+                      'is defined by option --gpio_mode')
+
+    parser.add_option('-a', '--alt-gpio-id', dest='alt_gpio_id',
+                      metavar='GPIO_ID', type='int', default=gpio_alt_default,
+                      help='GPIO id for the alternate trial trigger. '\
+                      'GPIO numbering mode is defined by option --gpio_mode')
+                      
+    parser.add_option('-m', '--gpio_mode', dest='gpio_mode',
+                      type='choice', default='BCM', choices=['BCM', 'BOARD'],
+                      help='GPIO numbering mode, either BCM or BOARD')
+
+    parser.add_option('-t', '--gpio_duration_ms', dest='gpio_duration',
+                      metavar='TIME_DURATION', default=1,
+                      type='int', help='GPIO on duration while triggering, in '\
+                                       'millisecond (integer).')
+    
+    parser.add_option('-d', '--dump-directory', dest='dump_directory',
+                      metavar='PATH', default=default_dump_dir,
+                      help='Path where to store the file dumped as trigger.' \
+                      'default is sys_tmp_dir/polos_server')
+
+    parser.add_option('-p', '--port', dest='port', metavar='PORT',
+                      default=STS_DEFAULT_PORT,
+                      type='int', help='Server port')
+
+
+    (options, args) = parser.parse_args()
+    logger.setLevel(options.verbose)
+
+    nba = len(args)
+    if nba < min_args or (max_args >= 0 and nba > max_args):
+        parser.print_help()
+        return 1
+
+    trigger_mode = args[0]
+    assert(trigger_mode in TRIGGER_MODES)
+    
+    
+    if trigger_mode == 'TRIGGER_FILE':
+        callback1 = TimestampSaver(options.dump_directory, trigger_fn_prefix)
+        callback2 = TimestampSaver(options.dump_directory, dummy_fn_prefix)
+    elif trigger_mode == 'TRIGGER_GPIO':
+        gpio_mode = {'BCM' : GPIO.BCM, 'BOARD' : GPIO.BOARD}[options.gpio_mode]
+        GPIO.setmode(gpio_mode)
+
+        gpio_id_main = int(options.trigger_gpio_id)
+        gpio_id_alt = int(options.alt_gpio_id)
+        
+        GPIO.setup(gpio_id_main, GPIO.OUT, initial=GPIO.LOW)
+        GPIO.setup(gpio_id_alt, GPIO.OUT, initial=GPIO.LOW)
+
+        callback1 = GPIOTrigger(gpio_id_main, gpio_on_duration)
+        callback2 = GPIOTrigger(gpio_id_alt, gpio_on_duration)
+    elif trigger_mode == 'TRIGGER_PRINT':
+        callback1 = lambda: print('trigger! at', time.time())
+        callback2 = lambda: print('test trigger at', print(time.time()))
+        
+    sync_trigger_server(port=options.port, callback1=callback1,
+                        callback2=callback2, server_name=STS_DEFAULT_NAME)
+
+    if trigger_mode == 'GPIO':
+        logger.info('Cleanup GPIO...')
+        GPIO.cleanup(gpio_id)
+
+if __name__ == '__main__':
+    main()

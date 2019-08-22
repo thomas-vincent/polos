@@ -1,0 +1,84 @@
+#! /usr/bin/env python3
+"""
+Request a synchronized trigger, by calling a Synchronized Trigger Server
+
+Mainly for test purpose.
+Trigger request is normally managed by polos_client_ui.
+
+See usage
+"""
+from optparse import OptionParser
+import sys
+import logging
+import os.path as op
+import os
+import tempfile
+from polos.server import sync_trigger_server, STS_DEFAULT_PORT, TimestampSaver
+from polos.server import STS_DEFAULT_NAME, STClient
+from polos.server import client_trigger_fn_prefix as trigger_fn_prefix
+
+logging.basicConfig(stream=sys.stdout)
+logger = logging.getLogger('polos')
+
+
+def main():
+    usage = 'usage: %prog [options] SERVER_HOST'
+    description = 'Request a synchronized trigger. A running STServer must be ' \
+                  'reachable at SERVER_HOST. See command '\
+                  'polos_sync_trigger_server. To specify port, see options.'
+
+    min_args = 1
+    max_args = 1
+
+    parser = OptionParser(usage=usage, description=description)
+        
+    parser.add_option('-v', '--verbose', dest='verbose', metavar='VERBOSELEVEL',
+                      type='int', default=0,
+                      help='Amount of verbosity: '\
+                           '0 (NOTSET: quiet, default), '\
+                           '50 (CRITICAL), ' \
+                           '40 (ERROR), ' \
+                           '30 (WARNING), '\
+                           '20 (INFO), '\
+                           '10 (DEBUG)')
+
+    # TODO: use config file for these:
+    default_dump_dir = op.join(tempfile.gettempdir(), 'polos')
+    if not op.exists(default_dump_dir):
+        os.makedirs(default_dump_dir)
+
+    parser.add_option('-s', '--save', dest='dump_directory',
+                      metavar='PATH', default=None,
+                      help='Path where to store the file dumped as trigger.' \
+                      'default is sys_tmp_dir/polos_client')
+
+    parser.add_option('-d', '--dump-directory', dest='dump_directory',
+                      metavar='PATH', default=None,
+                      help='Path to save the trigger timestamp.' \
+                      'If not given, trigger timestamp is only printed')
+    
+    parser.add_option('-p', '--port', dest='port', metavar='PORT',
+                      default=STS_DEFAULT_PORT,
+                      type='int', help='Server port. Default is %default.')
+
+    (options, args) = parser.parse_args()
+    logger.setLevel(options.verbose)
+
+    nba = len(args)
+    if nba < min_args or (max_args >= 0 and nba > max_args):
+        parser.print_help()
+        return 1
+
+    server_host = args[0]
+    
+    if options.dump_directory is not None:
+        callback = TimestampSaver(options.dump_directory, trigger_fn_prefix)
+    else:
+        callback = lambda : print(time.time())    
+    trigger_sender = STClient(trigger_callback=callback)
+    trigger_sender.connect(server_host, int(options.port))
+    trigger_sender.request()
+    trigger_sender.shutdown_server()
+
+if __name__ == '__main__':
+    main()
