@@ -1,10 +1,10 @@
-import socket
+import os.path as op
 import time
 import timeit
-import select
-#from threading import Thread, Timer
+from threading import Thread
 from multiprocessing import Process
-
+import socket as socket_module
+import select
 import logging
 
 import numpy as np
@@ -14,81 +14,197 @@ from ._polos import STATUS_OK, STATUS_ERROR, STATUS_WARNING
 logger = logging.getLogger('polos')
 
 
-class SNTPServer(Process):
-    """ 
-    NTP-like server using TCP, returning receive / transmit
-    timestamps. A callback can be executed before replying,
-    depending on a query flag.
+## Synchronised Trigger Server (STS) ##
+STS_BUFFER_SIZE = 2**6
+STS_DEFAULT_PORT = 8888
+STS_CONNECTION_TIMEOUT = 1
 
-    TODO: rework specification... no longer a simple NTP...
-          timestamping scheme is based on NTP but main feature is 
-          *time-critical callbacking*
-          -> that's why using Process is mandatory. threading has too much
-          overhead and uncertainty. 
-          Accurate timestamping is not necessary -> maybe use perf_counter
+STS_CALLBACK_1 = b'0'
+STS_CALLBACK_2 = b'1'
+STS_QUIT = b'2'
+
+STS_DEFAULT_NAME = 'STServer'
+
+client_trigger_fn_prefix = 'st-client'
+server_trigger_fn_prefix = 'st-server'
+server_dummy_fn_prefix = 'sts-dummy'
+
+class NoStatus:
+    def set_status(self, st, m):
+        pass
+    
+    def get_status():
+        return None, ''
+    
+class TimestampSaver:
+    def __init__(self, tmp_dir, fn_prefix):
+        self.fn_prefix = op.join(tmp_dir, fn_prefix)
+
+    def __call__(self):
+        ts = time.time()
+        open(self.fn_prefix + '_' + str(ts), 'a').close()
+
+    def get_ts(self):
+        ts_fn = glob(self.fn_prefix + '_' + '*')[0]
+        return TimestampSaver.get_ts_from_filename(ts_fn)
+
+    @staticmethod
+    def get_ts_from_filename(ts_fn):
+        return float(op.split(ts_fn)[1].split('_')[1])    
+    
+def sync_trigger_server(port=STS_DEFAULT_PORT, callback1=None,
+                        callback2=None, server_name=STS_DEFAULT_NAME,
+                        receive_timeout=None, status_handler=None):
+    """
+    TODO: add finished callback?
     """
     
-    BUFFER_SIZE = 2**6
-    DEFAULT_PORT = 8888
-    CONNECTION_TIMEOUT = 1
+    ## Setup
+    def init_callback(cb):
+        if cb is None:
+            return lambda: None
+        else:
+            assert(callable(cb))
+            return cb
 
-    EXECUTE_CALLBACK = b'1'
-    SKIP_CALLBACK = b'0'
-    QUIT = b'2'
+    callback1 = init_callback(callback1)
+    callback2 = init_callback(callback2)
+
+    if status_handler is None:
+        status_handler = NoStatus()
+        
+    status_handler.set_status(STATUS_ERROR, 'Idle')
+
+    # Evaluate reply encoding overhead
+    nb_trials = 10000
+    code = '(str(ts)+" "+str(ts)+" "+str(ts)).encode()'
+    ts_encode_time = timeit.timeit(code, setup='ts=time.time()',
+                                   number=nb_trials) / nb_trials
     
-    def __init__(self, port=DEFAULT_PORT, callback=None,
-                 callback_dummy=None,
-                 receive_timeout=None,
-                 server_name='SNTPServer'):
+
+    # Setup socket
+    socket = socket_module.socket(socket_module.AF_INET,
+                                  socket_module.SOCK_STREAM)
+    socket.setsockopt(socket_module.SOL_SOCKET, socket_module.SO_REUSEADDR, True)
+    socket.bind(('', port))
+    socket.listen(1)
+
+    status_handler.set_status(STATUS_WARNING, 'Waiting connection...')
+    logger.info('%s waiting connection on %s', server_name, socket)
+    
+    ## Main loop
+    finished = False
+    while not finished and socket is not None:
+        socket.settimeout(STS_CONNECTION_TIMEOUT)
+        try:
+            connection, conn_address = socket.accept() #wait
+            status_handler.set_status(STATUS_WARNING,
+                                      'Connecting to %s' % str(conn_address))
+            
+            # listen for some time then check if something else should
+            # be done instead, like terminating the server.
+            # Will come back here if nothing needed to be done.
+        except socket_module.timeout:
+            logger.debug('%s connection timeout', server_name)
+            connection = None
+
+        # Use a dict to get the same call delay for all callbacks
+        actions = {STS_CALLBACK_1 : callback1,
+                   STS_CALLBACK_2 : callback2}
+        if connection is not None:
+            logger.info('%s waiting for request from %s',
+                        server_name, conn_address)
+            logger.info('%s waiting for request using %s',
+                        server_name, connection)
+            
+            status_handler.set_status(STATUS_OK,
+                                      'Connected to %s' % str(conn_address))
+
+            connection.setblocking(False)
+            while not finished and socket is not None:
+                ready = select.select([connection], [], [], receive_timeout)
+                if ready[0]:
+                    data = connection.recv(STS_BUFFER_SIZE) #wait
+                    ts_receive = time.time()
+                    # There is still the overhead of "dict.get" here:
+                    action_result = actions.get(data, lambda: 1)()
+                    ts_callback = time.time()
+                    if action_result == 1:
+                        if not data:
+                            break
+                        elif data == STS_QUIT:
+                            finished = True
+                            break
+                        else:
+                            finished = True
+                            msg = 'Shutting down because of bad request: %s' % \
+                                  data
+                            status_handler.set_status(STATUS_ERROR, msg)
+                            logger.error('%s %s', server_name, msg)
+                            break
+                    ts_transmit = time.time() + ts_encode_time
+                    connection.sendall((str(ts_receive) + ' ' + \
+                                        str(ts_callback) + ' ' + \
+                                        str(ts_transmit)).encode())
+                    
+            logger.info('%s last callback at %s', server_name, ts_callback)
+            logger.info('%s closing connection %s', server_name, connection)
+            connection.close()
+            
+    ## Close
+    if socket is not None:
+        logger.info('%s closing %s', server_name, socket)
+        socket.shutdown(socket_module.SHUT_RDWR)
+        socket.close()
+        status_handler.set_status(STATUS_ERROR, 'Finished')
+
+class STServerProcess(Process):
+    """ 
+    Synchronized Trigger Server encapsulated in a multiprocessing.Process
+
+    NTP-like server using TCP, returning receive / transmit timestamps. 
+    A callback can be executed before replying, depending on a query flag.
+
+    Note: Process is used to minimize thread switching overhead, hopefully
+          using a dedicated CPU to be as precise as possible.
+          For more flexibility, but potentially less precision, 
+          use STServerThread.
+          
+    TODO: Accurate timestamping may not necessary -> maybe use perf_counter
+    """    
+    
+    def __init__(self, port=STS_DEFAULT_PORT, callback1=None,
+                 callback2=None, receive_timeout=None,
+                 server_name=STS_DEFAULT_NAME, status_handler=None):
         super().__init__()
 
-        if callback is None:
-            self.callback = lambda: None
-        else:
-            assert(callable(callback))
-            self.callback = callback
-
-        if callback_dummy is None:
-            self.callback_dummy = lambda: None
-        else:
-            assert(callable(callback_dummy))
-            self.callback_dummy = callback_dummy
-
+        self.callback1 = callback1
+        self.callback2 = callback2
         self.port = port
         self.server_name = server_name
-
         self.receive_timeout = receive_timeout
-        
-        nb_trials = 10000
-        code = '(str(ts)+" "+str(ts)+" "+str(ts)).encode()'
-        self.ts_encode_time = timeit.timeit(code, setup='ts=time.time()',
-                                            number=nb_trials) / nb_trials
-        
-        self.status = STATUS_ERROR
-        self.status_message = 'Idle'
-        self.finished = True
 
+        if status_handler is None:
+            status_handler = NoStatus()
+        self.status_handler = status_handler
+        
+        self.status_handler.set_status(STATUS_ERROR, 'Not started')
+        
     def get_port(self):
         return self.port
 
-    def get_status(self):
-        return self.status, self.status_message
-    
-    def close(self):
-        if self.socket is not None:
-            logger.info('%s closing %s', self.server_name, self.socket)
-            self.socket.shutdown(socket.SHUT_RDWR)
-            self.socket.close()
-            self.socket = None
-
-            self.status = STATUS_ERROR
-            self.status_message = 'Closed'
-
     def run(self):
+        sync_trigger_server(self.port, self.callback1, self.callback2,
+                            self.server_name, self.receive_timeout,
+                            self.status_handler)
+        
+    def run_old(self):
         #TODO: put everything in a function and wrap it in Process
         #      -> could be called as is in a script
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
+        self.socket = socket_module.socket(socket_module.AF_INET,
+                                           socket_module.SOCK_STREAM)
+        self.socket.setsockopt(socket_module.SOL_SOCKET,
+                               socket_module.SO_REUSEADDR, True)
         self.socket.bind(('', self.port))
         self.socket.listen(1)
 
@@ -110,7 +226,7 @@ class SNTPServer(Process):
                 # listen for some time then check if something else should
                 # be done instead, like terminating the server.
                 # Will come back here if nothing needed to be done.
-            except socket.timeout:
+            except socket_module.timeout:
                 logger.info('%s connection timeout', self.server_name)
                 connection = None
                 
@@ -145,8 +261,7 @@ class SNTPServer(Process):
                             logger.error('%s received bad request %s',
                                          self.server_name, data)
                             break
-                        # else:
-                        #     logger.info('%s received: %s', self.server_name, data)
+
                         ts_transmit = time.time() + self.ts_encode_time
                         connection.sendall((str(ts_receive) + ' ' + \
                                             str(ts_callback) + ' ' + \
@@ -159,25 +274,60 @@ class SNTPServer(Process):
                 connection.close()
         self.close()
         
-    def stop(self):
-        self.finished = True
-            
-class SNTPClient:
+
+class STServerThread(Thread):
+    """ 
+    Synchronized Trigger Server encapsulated in a threading.Thread
+
+    NTP-like server using TCP, returning receive / transmit timestamps. 
+    A callback can be executed before replying, depending on a query flag.
+
+    Note: Thread can have large overhead and uncertainty.
+          If time-critical is required, use STServerProcess.
+          
+    """
+    
+    
+    def __init__(self, port=STS_DEFAULT_PORT, callback1=None,
+                 callback2=None, receive_timeout=None,
+                 server_name=STS_DEFAULT_NAME, status_handler=None):
+        super().__init__()
+
+        self.callback1 = callback1
+        self.callback2 = callback2
+        self.port = port
+        self.server_name = server_name
+        self.receive_timeout = receive_timeout
+
+        if status_handler is None:
+            status_handler = NoStatus()
+        self.status_handler = status_handler
+
+        self.status_handler.set_status(STATUS_ERROR, 'Not started')
+        self.finished = False
+        
+    def get_port(self):
+        return self.port
+    
+    def run(self):
+        sync_trigger_server(self.port, self.callback1, self.callback2,
+                            self.server_name, self.receive_timeout,
+                            self.status_handler)
+        
+class STBaseClient:
 
     CLOCK_OFFSET_TOLERANCE = 10e-3 # second
     
-    def __init__(self, client_name='SNTPClient'):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    def __init__(self, client_name):
+        self.socket = socket_module.socket(socket_module.AF_INET,
+                                           socket_module.SOCK_STREAM)
         self.status = STATUS_ERROR
         self.status_message = 'Not connected'
-
-        self.offset = None
-        self.roundtrip_delay = None
 
         self.client_name = client_name
         logger.info('%s created, socket: %s', self.client_name, self.socket)
         
-    def connect(self, host, port=SNTPServer.DEFAULT_PORT):
+    def connect(self, host, port=STS_DEFAULT_PORT):
         logger.info('%s connecting to %s:%d..., socket: %s', self.client_name,
                     host, port, self.socket)
         self.socket.connect((host, port))
@@ -199,14 +349,30 @@ class SNTPClient:
     def get_status(self):
         return self.status, self.status_message
 
+    def shutdown_server(self):
+        self.socket.setblocking(True)
+        self.socket.send(STS_QUIT)
+        
+    def request(self):
+        raise NotImplementedError()
+    
+
+class ST_NTPClient(STBaseClient):
+    DEFAULT_NAME = 'ST_NTPClient'
+    CLOCK_OFFSET_TOLERANCE = 10e-3 # second
+    
+    def __init__(self, client_name=DEFAULT_NAME):
+        super().__init__(client_name)
+        
+        self.offset = None
+        self.roundtrip_delay = None
+        
     def single_request(self):
         ts_orig = time.time()
-        self.socket.send(SNTPServer.SKIP_CALLBACK)
-        print('Sent took %f' % (time.time() - ts_orig))
-        time.sleep(0)
+        self.socket.send(STS_CALLBACK_1)
         ready = select.select([self.socket], [], [], 1)
         if ready[0]:
-            rdata = self.socket.recv(SNTPServer.BUFFER_SIZE)
+            rdata = self.socket.recv(STS_BUFFER_SIZE)
             ts_destination = time.time()
         else:
             raise Exception('Timeout during waiting for server answer')
@@ -224,11 +390,9 @@ class SNTPClient:
         offsets = np.zeros(nb_trials)
         delays = np.zeros(nb_trials)
         for itrial in range(nb_trials):
-            ts_orig, ts_dest, ts_transmit, ts_receive, ts_cbk = self.single_request()
-            offsets[itrial] = ((ts_receive - ts_orig) - \
-                               (ts_transmit - ts_dest)) / 2
-            delays[itrial] = (ts_dest - ts_orig) - \
-                             (ts_transmit - ts_receive)
+            ts_orig, ts_dest, ts_tr, ts_receive, ts_cbk = self.single_request()
+            offsets[itrial] = ((ts_receive - ts_orig) - (ts_tr - ts_dest)) / 2
+            delays[itrial] = (ts_dest - ts_orig) - (ts_tr - ts_receive)
 
         to_keep = np.argsort(delays)[nb_trials//2]
         self.offset = offsets[to_keep].mean() # rather trust requests with
@@ -242,7 +406,7 @@ class SNTPClient:
                     self.client_name, self.round_trip_delay,
                     self.round_trip_delay_std)
         
-        if abs(self.offset) < SNTPClient.CLOCK_OFFSET_TOLERANCE:
+        if abs(self.offset) < STClient.CLOCK_OFFSET_TOLERANCE:
             self.status = STATUS_OK
             self.status_message = 'Time offset with server: %1.3f s' % \
                                   self.offset
@@ -250,12 +414,8 @@ class SNTPClient:
             self.status = STATUS_WARNING
             self.status_message = 'LARGE Time offset with server: %1.3f s' % \
                                   self.offset
-
-def faint(delay):
-    end = time.perf_counter() + delay
-    while time.perf_counter() < end:
-        continue
-
+    
+            
 class EventLogger:
     def __init__():
         self.size = 10000
@@ -269,42 +429,43 @@ class EventLogger:
     def to_string():
         '\n'.join(['%f : %s' %self.events[i] for i in range(self.i_event)])
     
-class SyncTriggerClient(SNTPClient):
+class STClient(STBaseClient):
 
+    DEFAULT_NAME = 'STClient'
+    
     def __init__(self, trigger_callback=None):
 
-        super().__init__(client_name='SyncTriggerClient')
+        super().__init__(client_name=STClient.DEFAULT_NAME)
         
         assert(callable(trigger_callback))
         self.trigger_callback = trigger_callback
                 
-    def trigger(self):
+    def request(self, nb_trials=100):
                 
         # Request remote trigger
         self.socket.setblocking(False)
-        nb_trials = 50
         self.delays = np.zeros(nb_trials)
         
-        # TODO: discard prior step with dedicated pingpong client/server
-        # TODO: Warmup loop
-        trigger_bytes = [SNTPServer.SKIP_CALLBACK, SNTPServer.EXECUTE_CALLBACK]
+        trigger_bytes = [STS_CALLBACK_2, STS_CALLBACK_1]
         for itrial in range(nb_trials):
             ts_orig = time.time()
             self.socket.send(trigger_bytes[itrial==nb_trials-1])
             ts_send = time.time()
-            if itrial==nb_trials-1:
+            
+            if itrial==nb_trials-1: # last trial -> trigger
                 trigger_delay = estimated_delay - (ts_send - ts_orig)
+                # Use CPU-intensive wait loop to be as precise as possible
+                # Don't use time.sleep() (imprecise)
                 end = time.perf_counter() + trigger_delay
                 while time.perf_counter() < end:
                     continue
-
                 ts_pre_callback = time.time()
                 self.trigger_callback()
                 ts_end_callback = time.time()
-                # time.sleep(1e-6)
+                
             ready = select.select([self.socket], [], [], 1)
             if ready[0]:
-                rdata = self.socket.recv(SNTPServer.BUFFER_SIZE)
+                rdata = self.socket.recv(STS_BUFFER_SIZE)
                 ts_destination = time.time()
             else:
                 raise Exception('Timeout during waiting for server answer')
@@ -314,15 +475,9 @@ class SyncTriggerClient(SNTPClient):
             ts_remote_callback = float(rts2)
             ts_transmit = float(rts3)
 
-            # if itrial==nb_trials-1:
-            #     self.delays[itrial] = ((ts_destination - ts_orig) - \
-            #                            (ts_end_callback - ts_send) - \
-            #                            (ts_transmit - ts_receive)) / 2 + \
-            #                            ts_remote_callback - ts_receive
-            # else:
             self.delays[itrial] = ((ts_destination - ts_orig) - \
-                                   (ts_transmit - ts_receive)) / 2 + \
-                                   ts_remote_callback - ts_receive
+                                   (ts_transmit - ts_receive)) / 2 # + \
+                                   # (ts_remote_callback - ts_receive)/2
             if itrial==nb_trials-2:
                 estimated_delay = self.delays[-10:-1].mean()
 
@@ -343,15 +498,10 @@ class SyncTriggerClient(SNTPClient):
                     ts_pre_callback)
         logger.info('%s ts end callback: %f', self.client_name,
                     ts_end_callback)
-        logger.info('%s ts remote callback (server time): %f', self.client_name,
-                    ts_remote_callback)
-
-        # logger.info('%s trigger time: %f', self.client_name,
-        #             self.trigger_time)
                 
         self.remote_trigger_sent_at = ts_orig
         logger.info('%s remote trigger issued btwn %f and %f (server time)',
-                    self.client_name, ts_receive, ts_transmit)
+                    self.client_name, ts_receive, ts_remote_callback)
 
         # remote_delay = self.delays[-10:-1].mean()
         print('all delays:\n', self.delays)
@@ -359,6 +509,3 @@ class SyncTriggerClient(SNTPClient):
         self.trigger_delay_error = estimated_delay - self.delays[-1]
 
         return estimated_delay, remote_delay_std
-
-    def shutdown_server(self):
-        self.socket.send(SNTPServer.QUIT)

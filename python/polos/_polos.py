@@ -19,7 +19,10 @@ DMESG_LOW_BAT_ENTRY_RE = re.compile('^[\][ 0-9]+[.][0-9]+[]].*: (.*low voltage.*
 STATUS_ERROR = 0
 STATUS_OK = 1
 STATUS_WARNING = 2
-STATUS_LABELS = ['ERROR', 'Ok', 'Warning']
+STATUS_LABELS = {STATUS_ERROR: 'ERROR',
+                 STATUS_OK: 'Ok',
+                 STATUS_WARNING: 'Warning',
+                 None: 'None'}
 
 def get_local_ip():
     try:
