@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import tkinter as tk
+
+from polos import STATUS_ERROR, STATUS_OK, STATUS_WARNING
+
+class LedStatus(tk.Canvas):
+
+    colors = {None : 'gray',
+              STATUS_ERROR : 'red', STATUS_WARNING : 'orange',
+              STATUS_OK : 'green2'}
+    
+    def __init__(self, parent, size=20, **kwargs):
+        tk.Canvas.__init__(self, parent, width=size, height=size, bd=0, **kwargs)
+        self.status = None
+        self.gfx = self.create_oval(1,1,size,size)
+        self.update()
+        
+    def update(self):
+        self.itemconfig(self.gfx, fill=LedStatus.colors[self.status])
+
+    def set_status(self, status):
+        assert(status in self.colors)
+        self.status = status
+        self.update()
+        
+class Application(tk.Frame):
+    def __init__(self, master=None):
+        super().__init__(master)
+        self.master = master
+        self.pack()
+        self.create_widgets()
+
+    def create_widgets(self):
+
+        self.status_frame = tk.Frame(self)
+        self.status_frame.pack(side='top')
+
+        self.button_frame = tk.Frame(self)
+        self.button_frame.pack(side='bottom')
+
+        self.lstatus = tk.Label(self.status_frame,
+                                text='Status:').grid(row=0, column=0)
+        self.led = LedStatus(self.status_frame)
+        self.led.grid(row=0, column=1)
+        self.led.set_status(STATUS_ERROR)
+
+        self.lstatus2 = tk.Label(self.status_frame,
+                                 text='AAAAAAnother Status:')
+        self.lstatus2.grid(row=1, column=0)
+        self.led2 = LedStatus(self.status_frame)
+        self.led2.grid(row=1, column=1)
+        self.led2.set_status(STATUS_WARNING)
+
+        
+        self.hi_there = tk.Button(self.button_frame)
+        self.hi_there["text"] = "Click me!"
+        self.hi_there["command"] = self.say_hi
+        self.hi_there.pack(side='left')
+
+        self.quit = tk.Button(self.button_frame, text="QUIT", fg="red",
+                              command=self.master.destroy)
+        self.quit.pack(side='left')
+
+    def say_hi(self):
+        print("hi there, everyone!")
+
+root = tk.Tk()
+app = Application(master=root)
+app.mainloop()
