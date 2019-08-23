@@ -47,7 +47,10 @@ class SyncTriggerTest(unittest.TestCase):
         
         if '-v' in sys.argv:
             logger.setLevel(10)
-
+            self.verbose = True
+        else:
+            self.verbose = False
+            
     def tearDown(self):
         for tc in self.to_close:
             tc.close()
@@ -232,7 +235,7 @@ class SyncTriggerTest(unittest.TestCase):
             
         if inacurate or too_large:
             raise Exception(message)
-        else:
+        elif self.verbose:
             print(message)
 
         if too_large:
@@ -242,7 +245,10 @@ class SyncTriggerTest(unittest.TestCase):
         from subprocess import Popen
         
         cmd_server = ['polos_sync_trigger_server', 'TRIGGER_FILE',
-                      '-d', self.tmp_dir, '-v', '10']
+                      '-d', self.tmp_dir]
+        if self.verbose:
+            cmd_client.extend(['-v', '10'])
+
         server_proc = Popen(cmd_server, stdout=sys.stdout, stderr=sys.stderr)
         self.procs.append(server_proc)
         
@@ -250,7 +256,10 @@ class SyncTriggerTest(unittest.TestCase):
                         # todo: use server status output to now when it's ready
         
         cmd_client = ['polos_sync_trigger_request', 'localhost',
-                      '-d', self.tmp_dir, '-v', '10']
+                      '-d', self.tmp_dir]
+        if self.verbose:
+            cmd_client.extend(['-v', '10'])
+        
         client_proc = Popen(cmd_client, stdout=sys.stdout, stderr=sys.stderr)
         self.procs.append(client_proc)
         client_proc.wait()
@@ -270,8 +279,9 @@ class SyncTriggerTest(unittest.TestCase):
         server_ts = TimestampSaver.get_ts_from_filename(server_trigger_fn)
 
         tolerance = 1e-3
-        print('client ts:', client_ts)
-        print('server ts:', server_ts)
+        if self.verbose:
+            print('client ts:', client_ts)
+            print('server ts:', server_ts)
         self.assertLess(abs(client_ts-server_ts), tolerance)
         
     def test_trigger_with_scripts_gpio(self):
