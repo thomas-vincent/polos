@@ -464,7 +464,7 @@ class STClient(STBaseClient):
                 self.trigger_callback()
                 ts_end_callback = time.time()
                 
-            ready = select.select([self.socket], [], [], 1)
+            ready = select.select([self.socket], [], [], 5)
             if ready[0]:
                 rdata = self.socket.recv(STS_BUFFER_SIZE)
                 ts_destination = time.time()
