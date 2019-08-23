@@ -13,6 +13,8 @@ import logging
 import os.path as op
 import os
 import tempfile
+import time
+
 from polos.server import sync_trigger_server, STS_DEFAULT_PORT, TimestampSaver
 from polos.server import STS_DEFAULT_NAME, STClient
 from polos.server import client_trigger_fn_prefix as trigger_fn_prefix

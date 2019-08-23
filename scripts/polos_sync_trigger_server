@@ -17,6 +17,8 @@ import logging
 import os.path as op
 import os
 import tempfile
+import time
+
 from polos.server import sync_trigger_server, STS_DEFAULT_PORT, TimestampSaver
 from polos.server import STS_DEFAULT_NAME
 from polos.server import server_trigger_fn_prefix as trigger_fn_prefix
@@ -115,8 +117,8 @@ def main():
         callback2 = GPIOTrigger(gpio_id_alt, gpio_on_duration)
     elif trigger_mode == 'TRIGGER_PRINT':
         callback1 = lambda: print('trigger! at', time.time())
-        callback2 = lambda: print('test trigger at', print(time.time()))
-        
+        callback2 = lambda: print('test trigger at', time.time())
+
     sync_trigger_server(port=options.port, callback1=callback1,
                         callback2=callback2, server_name=STS_DEFAULT_NAME)
 

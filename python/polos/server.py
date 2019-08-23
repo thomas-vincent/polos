@@ -6,6 +6,7 @@ from multiprocessing import Process
 import socket as socket_module
 import select
 import logging
+from glob import glob
 
 import numpy as np
 
@@ -504,8 +505,11 @@ class STClient(STBaseClient):
                     self.client_name, ts_receive, ts_remote_callback)
 
         # remote_delay = self.delays[-10:-1].mean()
-        print('all delays:\n', self.delays)
+        # print('all delays:\n', self.delays)
         remote_delay_std = self.delays.std()
         self.trigger_delay_error = estimated_delay - self.delays[-1]
 
         return estimated_delay, remote_delay_std
+
+
+    
