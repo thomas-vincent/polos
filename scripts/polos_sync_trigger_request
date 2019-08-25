@@ -76,7 +76,30 @@ def main():
     if options.dump_directory is not None:
         callback = TimestampSaver(options.dump_directory, trigger_fn_prefix)
     else:
-        callback = lambda : print(time.time())    
+        # callback = lambda : print(time.time())
+        if 0: # flash a small rectangle using pygame
+            import pygame
+            import numpy as np
+            os.environ['SDL_VIDEO_WINDOW_POS'] = "%d,%d" % (1600,900)
+            pygame.init()
+            class RectBlit:
+                def __init__(self):
+                    s = 10
+                    self.screen = pygame.display.set_mode((s,s))
+                    pygame.surfarray.blit_array(self.screen,
+                                                np.full((s,s),
+                                                        fill_value=255+255*256))
+                    pygame.display.flip()
+    
+                    self.to_blit = np.full((s,s), fill_value=255)
+    
+                def __call__(self):
+                    pygame.surfarray.blit_array(self.screen, self.to_blit)
+                    pygame.display.flip()
+            callback = RectBlit()
+        else:
+            # use GPIO
+            pass
     trigger_sender = STClient(trigger_callback=callback)
     trigger_sender.connect(server_host, int(options.port))
     trigger_sender.request()

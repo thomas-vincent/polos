@@ -19,8 +19,6 @@ import polos
 from polos.server import STServerProcess, STServerThread, ST_NTPClient, STClient
 from polos.server import TimestampSaver
 
-# TODO: implement tennis
-
 class StatusHolder:
     def __init__(self):
         self.status = None
@@ -33,6 +31,19 @@ class StatusHolder:
     def get_status(self):
         return self.status, self.status_message
 
+from polos.server import format_duration
+class MiscTest(unittest.TestCase):
+    
+    def test_format_duration(self):
+        self.assertEqual(format_duration(3600*24*3+3600*2+60*2+4+0.1),
+                         '3j02h02m04s100ms')
+        self.assertEqual(format_duration(3601), '1h00m01s')
+        self.assertEqual(format_duration(0.016), '16ms')
+        self.assertEqual(format_duration(0.0001), '100mus')
+        self.assertEqual(format_duration(0.0029), '2ms900mus')
+        self.assertEqual(format_duration(0), '0s')
+
+        
 class SyncTriggerTest(unittest.TestCase):
 
     def setUp(self):
@@ -247,7 +258,7 @@ class SyncTriggerTest(unittest.TestCase):
         cmd_server = ['polos_sync_trigger_server', 'TRIGGER_FILE',
                       '-d', self.tmp_dir]
         if self.verbose:
-            cmd_client.extend(['-v', '10'])
+            cmd_server.extend(['-v', '10'])
 
         server_proc = Popen(cmd_server, stdout=sys.stdout, stderr=sys.stderr)
         self.procs.append(server_proc)
