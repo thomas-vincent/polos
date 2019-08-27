@@ -8,6 +8,18 @@ logger = logging.getLogger('polos')
 
 class DppDecodeError(Exception): pass
 
+def mark_bins(bin_str, imark, padding=0, col_width=80):
+    # TODO: enable multiple markings
+    pad = ' ' * padding
+    # bin_str = ''.join([str(int(v)) for v in bins])
+    mark_str = ' ' * (imark) + '^' + ' ' * (len(bin_str)-imark)
+    from textwrap import wrap
+    return '\n'.join(['%s%s\n%s%s' % (pad, b, pad, m) \
+                      for b,m in zip(wrap(bin_str, col_width),
+                                     wrap(mark_str, col_width,
+                                          replace_whitespace=False,
+                                          drop_whitespace=False))])
+
 class DiscretePwmProtocol:
     """
     DiscretePwmProtocol (Dpp) transmits float values using only pulses, 
@@ -107,115 +119,39 @@ class DiscretePwmProtocol:
         
         assert(sig.ndim==1)
     
-        def mark_bins(bins, imark, padding=0, col_width=80):
-            # TODO: enable multiple markings
-            pad = ' ' * padding
-            bin_str = ''.join([str(int(v)) for v in bin_sig])
-            mark_str = ' ' * (imark) + '^' + ' ' * (len(bin_str)-imark)
-            from textwrap import wrap
-            return '\n'.join(['%s%s\n%s%s' % (pad, b, pad, m) \
-                              for b,m in zip(wrap(bin_str, col_width),
-                                             wrap(mark_str, col_width,
-                                                  replace_whitespace=False,
-                                                  drop_whitespace=False))])
-        
         bin_sig = sig > (sig.max() * cls.SIG_THRESH_FACTOR)
         # return self._decode_chunk_by_chunk(bin_sig)
-        return cls._decode_regexp(''.join([str(int(e)) for e in bin_sig]))
+        bin_sig_str = ''.join([str(int(e)) for e in bin_sig])
+        
+        return cls._decode_regexp(bin_sig_str)
 
     @classmethod
     def _decode_regexp(cls, bin_seq_str):
-            values = []
-            re_seqs = '1{6,8}0{1,3}(?:(?:1{1,3}|1{4,6})0{1,3}){4,}1{6,8}'
-            seqs = re.findall(re_seqs, bin_seq_str)
-
-            def decode_val(code):
-                tmp = re.sub('1{1,2}0{1,3}','o',re.sub('1{4,6}0{1,3}','z',code))
-                bins = tmp.replace('0', '').replace('z', '0').replace('o', '1')
-                return int(bins, 2)
-
-            for seq_match in re.finditer(re_seqs, bin_seq_str):
-                re_segs = '1{6,8}0{1,3}' \
-                          '(?P<precision>(?:(?:1{1,3}|1{4,6})0{1,3}){4})' \
-                          '(?P<value>(?:(?:1{1,3}|1{4,6})0{1,3})+)'\
-                          '1{6,8}'
-                rr_segs = re.search(re_segs, seq_match.string)
-                if rr_segs is not None:
-                    segs_groups = rr_segs.groupdict()
-                    precision = decode_val(segs_groups['precision'])
-                    value = decode_val(segs_groups['value']) / 10**precision
-                else:
-                    warning('Could not decode sequence at pos %d: %s',
-                            seq_match.start(), seq_match.string)
-                    continue
-                values.append((seq_match.start(), value))
-            return values
-        
-    def _decode_chunk_by_chunk(self, bin_sig):
-        interuptions = np.where(np.diff(bin_sig.astype(int))!=0)[0] + 1
-        chunks = np.split(bin_sig, interuptions)
-        bin_seq = []
+        print('decoding:\n' + mark_bins(bin_seq_str, 0))
         values = []
-        seq_started = False
-        seq_start = None
-        for chunk_start, chunk in zip(np.concatenate(([0], interuptions)),
-                                      chunks):
-            if len(chunk) > 0:
-                logger.debug('Current chunk start (%d):\n%s',
-                             chunk_start, mark_bins(bin_sig, chunk_start))
-                logger.debug('Current chunk end (%d):\n%s',
-                             chunk_start+len(chunk)-1,
-                             mark_bins(bin_sig, chunk_start+len(chunk)-1))
-                #TODO: enable multiple marking in one single output
-                
-                if np.any(chunk) and abs(len(chunk) - cls.NB_SAMPLES_DELIMITER) < 2:
-                    if not seq_started: # next bits are to be decoded
-                        logger.debug('-> Chunk is start delimiter')
-                        seq_started = True
-                        precision_read = False
-                        precision = None
-                        seq_start = chunk_start
-                    else: # end of a current encoding
-                        logger.debug('-> Chunk is end delimiter')
+        re_seqs = '1{6,8}0{1,3}(?:(?:1{1,3}|1{4,6})0{1,3}){4,}1{6,8}'
+        # seqs = re.findall(re_seqs, bin_seq_str)
 
-                        if not precision_read:
-                            raise DppDecodeError('Precision sequence not found')
-                        
-                        value = int(''.join(bin_seq),2) / 10**precision
-                        values.append((seq_start, value))
-                        logger.debug('Decoded value %f at position %d', value,
-                                     seq_start)
-                        
-                        bin_seq = []
-                        seq_started = False # wait for another sequence to start
-                        precision_read = False
-                        precision = None
-                elif seq_started:
-                    if np.any(chunk):
-                        if abs(len(chunk) - cls.NB_SAMPLES_BIT1) < 2:
-                            logger.debug('-> Chunk is BIT 1')
-                            bin_seq.append('1')
-                        elif abs(len(chunk) - cls.NB_SAMPLES_BIT0) < 2:
-                            logger.debug('-> Chunk is BIT 0')
-                            bin_seq.append('0')
-                        else:
-                            raise DppDecodeError('Error in chunk: %s' % \
-                                              ''.join([str(v) for v in chunk]))
-                    else:
-                        if abs(len(chunk) - cls.NB_SAMPLES_SEP) >= 2:
-                            raise DppDecodeError('Bad separator:\n%s' % \
-                                                 mark_bins(bin_sig, chunk_start))
-                    if not precision_read and \
-                       len(bin_seq) == cls.NB_BITS_PRECISION:
-                        precision = int(''.join(bin_seq),2)
-                        precision_read = True
-                        bin_seq = [] # reset list to accumulate bits for the
-                                     # encoded value
-                        
-        if seq_started:
-            raise DppDecodeError('Unterminated sequence:\n%s' % \
-                                 mark_bins(bin_sig, seq_start))
-        
+        def decode_val(code):
+            tmp = re.sub('1{1,2}0{1,3}','o',re.sub('1{4,6}0{1,3}','z',code))
+            bins = tmp.replace('0', '').replace('z', '0').replace('o', '1')
+            return int(bins, 2)
+
+        for seq_match in re.finditer(re_seqs, bin_seq_str):
+            re_segs = '1{6,8}0{1,3}' \
+                      '(?P<precision>(?:(?:1{1,3}|1{4,6})0{1,3}){4})' \
+                      '(?P<value>(?:(?:1{1,3}|1{4,6})0{1,3})+)'\
+                      '1{6,8}'
+            rr_segs = re.search(re_segs, seq_match.string)
+            if rr_segs is not None:
+                segs_groups = rr_segs.groupdict()
+                precision = decode_val(segs_groups['precision'])
+                value = decode_val(segs_groups['value']) / 10**precision
+            else:
+                warning('Could not decode sequence at pos %d: %s',
+                        seq_match.start(), seq_match.string)
+                continue
+            values.append((seq_match.start(), value))
         return values
         
     def send_value(self, value, sampling_rate, on_func=None, off_func=None):
@@ -408,7 +344,7 @@ class Recorder(Thread):
                 return
             except ValueError:
                 raise Exception('Recorder frequency too high. ' \
-                                'Maximum seems to be %1.3 Hz',
+                                'Maximum seems to be %1.3 Hz' % \
                                 1/overhead_time)
                 
             

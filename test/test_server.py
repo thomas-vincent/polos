@@ -69,14 +69,14 @@ class SyncTriggerTest(unittest.TestCase):
                 pr.kill()
                 pr.wait(timeout=0.2)
                 if pr.poll() is None:
-                    print('Cannot terminate subprocess', pr)
+                    raise Exception('Cannot terminate subprocess', pr)
                     
         for th in self.threads:
             # print('TearDown: Calling join')
             if th.is_alive():
                 th.join(timeout=0.2)
                 if th.is_alive():
-                    print('Cannot terminate thread', th)
+                    raise Exception('Cannot terminate thread', th)
             
         # print('Teardown complete')
 
