@@ -454,20 +454,24 @@ class STClient(STBaseClient):
             ts_send = time.time()
             
             if itrial==nb_trials-1: # last trial -> trigger
-                trigger_delay = estimated_delay - (ts_send - ts_orig)
-                # Use CPU-intensive wait loop to be as precise as possible
-                # Don't use time.sleep() (imprecise)
-                end = time.perf_counter() + trigger_delay
-                while time.perf_counter() < end:
-                    continue
+                send_duration = (ts_send - ts_orig)
+                if estimated_delay >= send_duration:
+                    trigger_delay = estimated_delay - send_duration
+                    # Use CPU-intensive wait loop to be as precise as possible
+                    # Don't use time.sleep() (imprecise)
+                    end = time.perf_counter() + trigger_delay
+                    while time.perf_counter() < end:
+                        continue
                 ts_pre_callback = time.time()
                 self.trigger_callback()
                 ts_end_callback = time.time()
-                
+                if estimated_delay < send_duration:
+                    trigger_delay = 0
+                    
             ready = select.select([self.socket], [], [], 5)
+            ts_destination = time.time()
             if ready[0]:
                 rdata = self.socket.recv(STS_BUFFER_SIZE)
-                ts_destination = time.time()
             else:
                 raise Exception('Timeout during waiting for server answer')
             
@@ -480,21 +484,25 @@ class STClient(STBaseClient):
                                    (ts_transmit - ts_receive)) / 2 # + \
                                    # (ts_remote_callback - ts_receive)/2
             if itrial==nb_trials-2:
-                estimated_delay = self.delays[-10:-1].mean()
+                estimated_delay = np.median(self.delays[-10:-1])
 
         # Aftermaths
         logger.info('%s request for remote trigger sent at %f',
                     self.client_name, ts_orig)
         logger.info('%s socket.send returned at %f',
                     self.client_name, ts_send)
-        logger.info('%s estimated remote delay : %f',
-                    self.client_name, estimated_delay)
-        logger.info('%s planned to wait %f after socket.send returned',
-                    self.client_name, trigger_delay)
-        logger.info('%s actually waited %f after socket.send returned',
-                    self.client_name, ts_pre_callback - ts_send)
-        logger.info('%s delay between socket.send and pre_callback: %f',
-                    self.client_name, ts_pre_callback - ts_orig)
+        logger.info('%s estimated remote delay : %s [%s-%s]',
+                    self.client_name, format_duration(estimated_delay),
+                    format_duration(self.delays[-10:-1].min()),
+                    format_duration(self.delays[-10:-1].max()))
+        logger.debug('%s all delays:\n%s ', self.client_name,
+                     '\n'.join([format_duration(d) for d in self.delays]))
+        logger.info('%s planned to wait %s after socket.send returned',
+                    self.client_name, format_duration(trigger_delay))
+        logger.info('%s actually waited %s after socket.send returned',
+                    self.client_name, format_duration(ts_pre_callback - ts_send))
+        logger.info('%s delay between socket.send and pre_callback: %s',
+                    self.client_name, format_duration(ts_pre_callback - ts_orig))
         logger.info('%s ts pre callback: %f', self.client_name,
                     ts_pre_callback)
         logger.info('%s ts end callback: %f', self.client_name,
@@ -513,3 +521,48 @@ class STClient(STBaseClient):
 
 
     
+def format_duration(duration_sec):
+    """ 
+    Return a string representation of the given time duration using the most
+    appropriate unit
+    """
+    break_downs_sec = [(3600*24, '%dj'), # day
+                       (3600, '%02dh'),  # hour
+                       (60, '%02dm'),    # min
+                       (1, '%02ds')]     # sec
+
+    break_downs_nanosec = [(1e6, '%03dms'),    # millisec
+                           (1e3, '%03dmus'),  # microsec
+                           (1, '%03dns')]    # nanosec
+
+    duration_sign = np.sign(duration_sec)
+    
+    def format_break_downs(d, ds, bds):
+        for ref_time, dformat in bds:
+            if d == 0:
+                break
+            if 0:
+                print('d=', d)
+                print('ds', ds)
+            if len(ds)>0 or d >= ref_time:
+                ds += dformat % (d//ref_time)
+            if 0:
+                print('-> ds=', ds)                
+            d = d % ref_time
+            if 0:
+                print('-> d=', d)
+                print()
+
+        return d, ds
+    
+    duration_sec, duration_str = format_break_downs(np.abs(duration_sec), '',
+                                                    break_downs_sec)
+
+    duration_ns = round((duration_sec - np.floor(duration_sec)) * 1e9)
+    duration_ns, duration_str = format_break_downs(duration_ns, duration_str,
+                                                   break_downs_nanosec)
+    
+    if len(duration_str) == 0:
+        return '0s'
+    else:
+        return ['','-'][int(duration_sign==-1)] + duration_str.lstrip('0')
