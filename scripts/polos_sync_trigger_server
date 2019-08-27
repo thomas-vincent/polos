@@ -53,8 +53,8 @@ def main():
                            '10 (DEBUG)')
 
     # TODO: use config file for these:
-    gpio_trig_default = 23 # BCM
-    gpio_alt_default = 6 # BCM
+    gpio_trig_default = 21 # BCM
+    gpio_alt_default = 26 # BCM
     default_dump_dir = op.join(tempfile.gettempdir(), 'polos')
     if not op.exists(default_dump_dir):
         os.makedirs(default_dump_dir)
@@ -73,8 +73,8 @@ def main():
                       type='choice', default='BCM', choices=['BCM', 'BOARD'],
                       help='GPIO numbering mode, either BCM or BOARD')
 
-    parser.add_option('-t', '--gpio_duration_ms', dest='gpio_duration',
-                      metavar='TIME_DURATION', default=1,
+    parser.add_option('-t', '--gpio_duration_ms', dest='gpio_duration_ms',
+                      metavar='TIME_DURATION', default=5,
                       type='int', help='GPIO on duration while triggering, in '\
                                        'millisecond (integer).')
     
@@ -104,17 +104,29 @@ def main():
         callback1 = TimestampSaver(options.dump_directory, trigger_fn_prefix)
         callback2 = TimestampSaver(options.dump_directory, dummy_fn_prefix)
     elif trigger_mode == 'TRIGGER_GPIO':
+        from RPi import GPIO 
         gpio_mode = {'BCM' : GPIO.BCM, 'BOARD' : GPIO.BOARD}[options.gpio_mode]
         GPIO.setmode(gpio_mode)
 
         gpio_id_main = int(options.trigger_gpio_id)
         gpio_id_alt = int(options.alt_gpio_id)
         
-        GPIO.setup(gpio_id_main, GPIO.OUT, initial=GPIO.LOW)
-        GPIO.setup(gpio_id_alt, GPIO.OUT, initial=GPIO.LOW)
-
+        gpio_on_duration = int(options.gpio_duration_ms) / 1000
+        
+        class GPIOTrigger:
+            def __init__(self, gpio_id, duration_sec):
+                self.gpio_id = gpio_id
+                self.duration_sec = duration_sec
+                GPIO.setup(gpio_id, GPIO.OUT, initial=GPIO.LOW)
+        
+            def __call__(self):
+                GPIO.output(self.gpio_id, GPIO.HIGH)
+                time.sleep(self.duration_sec)
+                GPIO.output(self.gpio_id, GPIO.LOW)
+                #time.sleep(self.duration_sec)
+            
         callback1 = GPIOTrigger(gpio_id_main, gpio_on_duration)
-        callback2 = GPIOTrigger(gpio_id_alt, gpio_on_duration)
+        callback2 = GPIOTrigger(gpio_id_alt, 0.2)
     elif trigger_mode == 'TRIGGER_PRINT':
         callback1 = lambda: print('trigger! at', time.time())
         callback2 = lambda: print('test trigger at', time.time())
@@ -122,9 +134,10 @@ def main():
     sync_trigger_server(port=options.port, callback1=callback1,
                         callback2=callback2, server_name=STS_DEFAULT_NAME)
 
-    if trigger_mode == 'GPIO':
+    if trigger_mode == 'TRIGGER_GPIO':
         logger.info('Cleanup GPIO...')
-        GPIO.cleanup(gpio_id)
+        GPIO.cleanup(gpio_id_main)
+        GPIO.cleanup(gpio_id_alt)
 
 if __name__ == '__main__':
     main()

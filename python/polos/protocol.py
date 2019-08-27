@@ -400,11 +400,17 @@ class Recorder(Thread):
             self.record_start_ts = time.time()
             try:
                 self.record()
+                overhead_time = time.perf_counter() - t0 + \
+                                self.record_start_ts - self.thread_start_ts
+                time.sleep(self.record_pace - overhead_time)
             except RecordTerminated:
                 self.finished = True
                 return
-            time.sleep(self.record_pace - time.perf_counter() + t0 - \
-                       self.record_start_ts + self.thread_start_ts)
+            except ValueError:
+                raise Exception('Recorder frequency too high. ' \
+                                'Maximum seems to be %1.3 Hz',
+                                1/overhead_time)
+                
             
         while not self.finished:
             t0 = time.perf_counter()
