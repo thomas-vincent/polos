@@ -127,7 +127,7 @@ class DiscretePwmProtocol:
 
     @classmethod
     def _decode_regexp(cls, bin_seq_str):
-        print('decoding:\n' + mark_bins(bin_seq_str, 0))
+        # print('decoding:\n' + mark_bins(bin_seq_str, 0))
         values = []
         re_seqs = '1{6,8}0{1,3}(?:(?:1{1,3}|1{4,6})0{1,3}){4,}1{6,8}'
         # seqs = re.findall(re_seqs, bin_seq_str)
@@ -202,6 +202,7 @@ class DiscretePwmProtocol:
         time.sleep(dt * DiscretePwmProtocol.NB_SAMPLES_SEP - \
                    time.perf_counter() + t_start_send)
         
+        logger.debug('Sending start delimiting sequence...')
         tic = time.perf_counter()
         # Value resolving is done right before the start of the delimiting sequence
         value_tr = get_value()
@@ -235,11 +236,14 @@ class DiscretePwmProtocol:
                 time.sleep(dt * DiscretePwmProtocol.NB_SAMPLES_SEP - \
                            time.perf_counter() + tic)
         # Send precision bits:
+        logger.debug('Sending encoded precision: %s', bin_seq_precision)
         send_bits(bin_seq_precision)
         # Send value bits:
+        logger.debug('Sending encoded value: %s', bin_seq_value)
         send_bits(bin_seq_value)
         
         # Send the delimiting sequence to tag the end:
+        logger.debug('Sending end delimiting sequence...')
         tic = time.perf_counter()
         on_func()
         time.sleep(dt * DiscretePwmProtocol.NB_SAMPLES_DELIMITER - \

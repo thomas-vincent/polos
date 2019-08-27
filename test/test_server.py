@@ -125,7 +125,7 @@ class SyncTriggerTest(unittest.TestCase):
         self.check_status(sts_status_tracker, polos.STATUS_ERROR, 'not started')
         
         server.start()
-        time.sleep(0.05) # wait a bit to let server update
+        time.sleep(0.2) # wait a bit to let server update
         self.check_status(sts_status_tracker, polos.STATUS_WARNING,
                           'waiting connection')
 
@@ -263,8 +263,8 @@ class SyncTriggerTest(unittest.TestCase):
         server_proc = Popen(cmd_server, stdout=sys.stdout, stderr=sys.stderr)
         self.procs.append(server_proc)
         
-        time.sleep(0.1) # wait for server to be ready
-                        # todo: use server status output to now when it's ready
+        time.sleep(0.5) # wait for server to be ready
+                        # todo: use server status output to know when it's ready
         
         cmd_client = ['polos_sync_trigger_request', 'localhost',
                       '-d', self.tmp_dir]

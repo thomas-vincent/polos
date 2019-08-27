@@ -60,16 +60,16 @@ class DiscretePwmProtocolTest(unittest.TestCase):
         self.assertTrue(abs(decoded_value - current_time) < 10**(-precision))
 
     def test_send_timestamp(self):
-        sampling_rate = 300 # Hz
-        recording_max_duration = 0.5 # second
+        sampling_rate = 200 # Hz
+        recording_max_duration = 2 # second
         gpio_state = [0]
         
         def gpio_on():
-            print('gpio on')
+            # print('gpio on')
             gpio_state[0] = 1
     
         def gpio_off():
-            print('gpio off')
+            # print('gpio off')
             gpio_state[0] = 0
     
         recorder = Recorder(gpio_state, sampling_rate, recording_max_duration)
@@ -80,10 +80,11 @@ class DiscretePwmProtocolTest(unittest.TestCase):
         onset, send_delay, tr_time = sender.send_value(time.time, sampling_rate,
                                                        on_func=gpio_on,
                                                        off_func=gpio_off)
-    
+        time.sleep(0.1)
         recorder.stop()
             
         found = sender.decode_values_from_signal(recorder.get_signal())
+        self.assertTrue(len(found) > 0)
         self.assertTrue(abs(found[0][1] - onset) < 10**(-precision))
         delay_record_trigger = send_delay + recorder.get_record_start_delay()
         self.assertTrue(found[0][0] <= np.ceil((delay_record_trigger) * sampling_rate))
