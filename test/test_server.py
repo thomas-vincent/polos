@@ -266,7 +266,7 @@ class SyncTriggerTest(unittest.TestCase):
         time.sleep(0.1) # wait for server to be ready
                         # todo: use server status output to now when it's ready
         
-        cmd_client = ['polos_sync_trigger_request', 'localhost',
+        cmd_client = ['polos_sync_trigger_request', 'localhost', 'TRIGGER_FILE',
                       '-d', self.tmp_dir]
         if self.verbose:
             cmd_client.extend(['-v', '10'])

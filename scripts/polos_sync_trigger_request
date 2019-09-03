@@ -22,15 +22,20 @@ from polos.server import client_trigger_fn_prefix as trigger_fn_prefix
 logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger('polos')
 
+TRIGGER_ACTIONS = ['TRIGGER_KEYSTROKE', 'TRIGGER_FILE', 'TRIGGER_PRINT']
 
 def main():
-    usage = 'usage: %prog [options] SERVER_HOST'
-    description = 'Request a synchronized trigger. A running STServer must be ' \
-                  'reachable at SERVER_HOST. See command '\
-                  'polos_sync_trigger_server. To specify port, see options.'
+    usage = 'usage: %prog [options] SERVER_HOST TRIGGER'
+    description = 'Request a synchronized trigger. TRIGGER specify the trigger '\
+                  'action. TRIGGER_KEYSTROKE sends a single keyboard keystroke '\
+                  '(see option --key). TRIGGER_PRINT prints the timestamp to '\
+                  'stdout. TRIGGER_FILE saves the timestamp as a file.' \
+                  'A running STServer must be reachable at SERVER_HOST. ' \
+                  'See command polos_sync_trigger_server. '\
+                  'To specify port, see options.'
 
-    min_args = 1
-    max_args = 1
+    min_args = 2
+    max_args = 2
 
     parser = OptionParser(usage=usage, description=description)
         
@@ -49,15 +54,21 @@ def main():
     if not op.exists(default_dump_dir):
         os.makedirs(default_dump_dir)
 
-    parser.add_option('-s', '--save', dest='dump_directory',
-                      metavar='PATH', default=None,
-                      help='Path where to store the file dumped as trigger.' \
-                      'default is sys_tmp_dir/polos_client')
-
+    parser.add_option('-k', '--key', dest='key',
+                      metavar='CHAR', default='A',
+                      help='Key to send as keyboard keystroke. '\
+                      'Default is %default. Works with TRIGGER_KEYSTROKE')
+    
+    parser.add_option('-w', '--wait-before-request', dest='delay_sec',
+                      type='int', default=0,
+                      help='Wait some time in second (integer) before requesting '\
+                      'the synchronized trigger. Useful to have time to manually '\
+                      'give focus to the app receiving a triggered keystroke.')
+    
     parser.add_option('-d', '--dump-directory', dest='dump_directory',
                       metavar='PATH', default=None,
-                      help='Path to save the trigger timestamp.' \
-                      'If not given, trigger timestamp is only printed')
+                      help='Path to save the trigger timestamp. Works ' \
+                      'with TRIGGER_FILE')
     
     parser.add_option('-p', '--port', dest='port', metavar='PORT',
                       default=STS_DEFAULT_PORT,
@@ -65,43 +76,61 @@ def main():
 
     (options, args) = parser.parse_args()
     logger.setLevel(options.verbose)
-
+    
     nba = len(args)
     if nba < min_args or (max_args >= 0 and nba > max_args):
         parser.print_help()
         return 1
 
-    server_host = args[0]
-    
-    if options.dump_directory is not None:
+    assert(options.delay_sec >= 0)
+
+    server_host, trigger_action  = args
+    assert(trigger_action in TRIGGER_ACTIONS)
+
+    if trigger_action == 'TRIGGER_FILE':
+        if options.dump_directory is None:
+            options.dump_directory = op.join(tempfile.gettempdir(), 'polos')
         callback = TimestampSaver(options.dump_directory, trigger_fn_prefix)
+    elif trigger_action == 'TRIGGER_KEYSTROKE':
+        from pynput.keyboard import Key,Controller
+        keyboard = Controller()
+        callback = lambda : keyboard.type(options.key)
+    elif trigger_action == 'TRIGGER_PRINT':
+        callback = lambda : print(time.time())
+    elif trigger_action == 'TRIGGER_PYGAME': #TODO add to exposed actions
+        # flash a small rectangle using pygame
+        import pygame
+        import numpy as np
+        os.environ['SDL_VIDEO_WINDOW_POS'] = "%d,%d" % (1600,900)
+        pygame.init()
+        class RectBlit:
+            def __init__(self):
+                s = 10
+                self.screen = pygame.display.set_mode((s,s))
+                pygame.surfarray.blit_array(self.screen,
+                                            np.full((s,s),
+                                                    fill_value=255+255*256))
+                pygame.display.flip()
+    
+                self.to_blit = np.full((s,s), fill_value=255)
+    
+            def __call__(self):
+                pygame.surfarray.blit_array(self.screen, self.to_blit)
+                pygame.display.flip()
+        callback = RectBlit()
     else:
-        # callback = lambda : print(time.time())
-        if 0: # flash a small rectangle using pygame
-            import pygame
-            import numpy as np
-            os.environ['SDL_VIDEO_WINDOW_POS'] = "%d,%d" % (1600,900)
-            pygame.init()
-            class RectBlit:
-                def __init__(self):
-                    s = 10
-                    self.screen = pygame.display.set_mode((s,s))
-                    pygame.surfarray.blit_array(self.screen,
-                                                np.full((s,s),
-                                                        fill_value=255+255*256))
-                    pygame.display.flip()
-    
-                    self.to_blit = np.full((s,s), fill_value=255)
-    
-                def __call__(self):
-                    pygame.surfarray.blit_array(self.screen, self.to_blit)
-                    pygame.display.flip()
-            callback = RectBlit()
-        else:
-            # use GPIO
-            pass
+        raise Exception('Unhandled trigger action: %s' % trigger_action)
+
+
     trigger_sender = STClient(trigger_callback=callback)
     trigger_sender.connect(server_host, int(options.port))
+
+    if options.delay_sec > 0:
+        logger.info('Requesting synchronized trigger in...')
+        for isec in range(options.delay_sec):
+            logger.info(' %d...', options.delay_sec - isec)
+            time.sleep(isec)
+
     trigger_sender.request()
     trigger_sender.shutdown_server()
 
