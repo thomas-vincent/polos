@@ -6,8 +6,20 @@ import numpy as np
 
 from polos.protocol import DiscretePwmProtocol, Recorder
 
+import logging
+import sys
+logging.basicConfig(stream=sys.stdout)
+logger = logging.getLogger('polos')
+
 class DiscretePwmProtocolTest(unittest.TestCase):
-    
+        
+    def setUp(self):
+        if '-v' in sys.argv:
+            logger.setLevel(10)
+            self.verbose = True
+        else:
+            self.verbose = False  
+             
     def test_decode_isolated_signal(self):
         bin_seq = '001' # 1
         precision = 9
@@ -48,8 +60,8 @@ class DiscretePwmProtocolTest(unittest.TestCase):
         self.assertTrue(abs(decoded_value - current_time) < 10**(-precision))
 
     def test_send_timestamp(self):
-        sampling_rate = 1000 # Hz
-        recording_max_duration = 0.5 # second
+        sampling_rate = 200 # Hz
+        recording_max_duration = 2 # second
         gpio_state = [0]
         
         def gpio_on():
@@ -68,10 +80,11 @@ class DiscretePwmProtocolTest(unittest.TestCase):
         onset, send_delay, tr_time = sender.send_value(time.time, sampling_rate,
                                                        on_func=gpio_on,
                                                        off_func=gpio_off)
-    
+        time.sleep(0.1)
         recorder.stop()
             
         found = sender.decode_values_from_signal(recorder.get_signal())
+        self.assertTrue(len(found) > 0)
         self.assertTrue(abs(found[0][1] - onset) < 10**(-precision))
         delay_record_trigger = send_delay + recorder.get_record_start_delay()
         self.assertTrue(found[0][0] <= np.ceil((delay_record_trigger) * sampling_rate))

@@ -111,7 +111,7 @@ def sync_trigger_server(port=STS_DEFAULT_PORT, callback1=None,
 
         # Use a dict to get the same call delay for all callbacks
         actions = {STS_CALLBACK_1 : callback1,
-                   STS_CALLBACK_2 : callback2}
+                   STS_CALLBACK_2  : callback2}
         if connection is not None:
             logger.info('%s waiting for request from %s',
                         server_name, conn_address)
@@ -124,9 +124,9 @@ def sync_trigger_server(port=STS_DEFAULT_PORT, callback1=None,
             connection.setblocking(False)
             while not finished and socket is not None:
                 ready = select.select([connection], [], [], receive_timeout)
+                ts_receive = time.time()
                 if ready[0]:
                     data = connection.recv(STS_BUFFER_SIZE) #wait
-                    ts_receive = time.time()
                     # There is still the overhead of "dict.get" here:
                     action_result = actions.get(data, lambda: 1)()
                     ts_callback = time.time()
